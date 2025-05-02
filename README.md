@@ -21,7 +21,7 @@ TL;DR: Spawn a thread pool, use it to asynchronously process data, then discard 
 
 ```rust
 use std::thread::{self, scope};
-use threadpool::Threadpool;
+use threadpools::Threadpool;
 
 fn is_prime(n: usize) -> bool {
     if n < 2 {
@@ -49,7 +49,7 @@ scope(|scope| {
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, scope};
 use std::time::Duration;
-use threadpool::Threadpool;
+use threadpools::Threadpool;
 
 fn is_prime(n: usize) -> bool {
     if n < 2 {
@@ -84,7 +84,7 @@ scope(|scope| {
 ### Filter, Map, & Reduce Asynchronously:
 
 ```rust
-use threadpool::*;
+use threadpools::*;
 use std::thread::scope;
 
 scope(|scope| {

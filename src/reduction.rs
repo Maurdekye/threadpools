@@ -70,7 +70,7 @@ pub trait ReduceAsync: Iterator {
     /// or more [`Threadpool`]s.
     ///
     /// ```
-    /// use threadpool::*;
+    /// use threadpools::*;
     /// use std::thread::scope;
     ///
     /// scope(|scope| {

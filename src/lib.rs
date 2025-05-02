@@ -53,7 +53,7 @@ pub trait FilterMapReduceAsync: Iterator {
     /// end up being reduced down to a single value anyway.
     ///
     /// ```
-    /// use threadpool::*;
+    /// use threadpools::*;
     ///
     /// let vals = 0..10000usize;
     ///

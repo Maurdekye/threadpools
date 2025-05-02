@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, scope};
 use std::time::Duration;
-use threadpool::{
+use threadpools::{
     FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsync, OrderedThreadpool,
     ReduceAsync, Threadpool,
 };
