@@ -1,13 +1,18 @@
+#![doc = include_str!("../README.md")]
 #![feature(mpmc_channel)]
+
 use std::{
-    num::NonZeroUsize,
-    sync::{
-        Arc, Condvar, Mutex,
-        mpmc::{Receiver, Sender, channel},
-        mpsc::TryRecvError,
-    },
-    thread::{Scope, ScopedJoinHandle, available_parallelism},
+    sync::{Arc, Condvar, Mutex},
+    thread::scope,
 };
+
+pub use ordered::*;
+pub use reduction::*;
+pub use unordered::*;
+
+pub mod ordered;
+pub mod reduction;
+pub mod unordered;
 
 #[derive(Clone)]
 struct Gate<S>(Arc<(Mutex<S>, Condvar)>);
@@ -29,128 +34,73 @@ impl<S> Gate<S> {
             state = self.0.1.wait(state).unwrap();
         }
     }
-}
 
-pub struct Threadpool<'scope, 'b, I, O> {
-    scope: &'scope Scope<'scope, 'b>,
-    #[allow(unused)]
-    workers: Vec<ScopedJoinHandle<'scope, ()>>,
-    work_submission: Sender<I>,
-    work_reception: Receiver<O>,
-    in_flight: Gate<usize>,
-}
-
-impl<'scope, 'b, I, O> Threadpool<'scope, 'b, I, O> {
-    pub fn new<F>(f: F, scope: &'scope Scope<'scope, 'b>) -> Self
+    fn check(&self) -> S
     where
-        F: Fn(usize, I) -> Option<O> + Send + Sync + 'scope,
-        I: Send + Sync + 'scope,
-        O: Send + Sync + 'scope,
+        S: Copy,
     {
-        Self::new_with_work_capacity(
-            f,
-            scope,
-            available_parallelism().unwrap_or(NonZeroUsize::MIN),
-        )
-    }
-
-    pub fn new_with_work_capacity<F>(
-        f: F,
-        scope: &'scope Scope<'scope, 'b>,
-        num_workers: NonZeroUsize,
-    ) -> Self
-    where
-        F: Fn(usize, I) -> Option<O> + Send + Sync + 'scope,
-        I: Send + Sync + 'scope,
-        O: Send + Sync + 'scope,
-    {
-        let (work_submission, inbox) = channel();
-        let (outbox, work_reception) = channel();
-        let in_flight = Gate::new(0usize);
-        let f = Arc::new(f);
-        let workers = (0..num_workers.into())
-            .map(|id| {
-                let inbox = inbox.clone();
-                let outbox = outbox.clone();
-                let in_flight = in_flight.clone();
-                let f = f.clone();
-                scope.spawn(move || {
-                    for item in inbox {
-                        let result = f(id, item);
-                        if let Some(result) = result {
-                            outbox.send(result).unwrap();
-                        }
-                        in_flight.update(|x| *x = x.saturating_sub(1));
-                    }
-                })
-            })
-            .collect();
-        Self {
-            workers,
-            work_submission,
-            work_reception,
-            in_flight,
-            scope,
-        }
-    }
-
-    pub fn submit(&self, input: I) {
-        self.in_flight.update(|x| *x += 1);
-        self.work_submission.send(input).unwrap()
-    }
-
-    pub fn recv(&self) -> O {
-        self.work_reception.recv().unwrap()
-    }
-
-    pub fn try_recv(&self) -> Option<O> {
-        match self.work_reception.try_recv() {
-            Ok(val) => Some(val),
-            Err(TryRecvError::Empty) => None,
-            _ => panic!(),
-        }
-    }
-
-    pub fn iter(&self) -> ThreadpoolIter<'_, 'scope, 'b, I, O> {
-        ThreadpoolIter(self)
-    }
-
-    pub fn into_iter(self) -> impl Iterator<Item = O> {
-        drop(self.work_submission);
-        self.work_reception.into_iter()
-    }
-
-    pub fn wait_until_finished(&self) {
-        self.in_flight.wait_while(|x| *x > 0);
-    }
-
-    pub fn consumer(&self, f: impl Fn(O) + 'scope + Sync + Send)
-    where
-        O: Send + Sync + 'scope,
-    {
-        let work_reception = self.work_reception.clone();
-        self.scope.spawn(move || {
-            for item in work_reception {
-                f(item);
-            }
-        });
+        *self.0.0.lock().unwrap()
     }
 }
 
-pub struct ThreadpoolIter<'a, 'scope, 'b, I, O>(&'a Threadpool<'scope, 'b, I, O>);
-
-impl<'a, 'scope, 'b, I, O> Iterator for ThreadpoolIter<'a, 'scope, 'b, I, O> {
-    type Item = O;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.work_reception.try_recv().ok()
-    }
+/// Extension trait to provide the `filter_map_reduce_async` function
+/// for iterators.
+pub trait FilterMapReduceAsync: Iterator {
+    /// Combine multithreaded mapping, filtering, and reduction all into a single tidy function call.
+    ///
+    /// Makes use of the standard [`Threadpool`] to discard the unnecessary overhead introduced by
+    /// the [`OrderedThreadpool`], which is unnecessary in light of the fact that all the results
+    /// end up being reduced down to a single value anyway.
+    ///
+    /// ```
+    /// use threadpool::*;
+    ///
+    /// let vals = 0..10000usize;
+    ///
+    /// let sequential_result = vals
+    ///     .clone()
+    ///     .filter_map(|x: usize| {
+    ///         let x = x.pow(3) % 100;
+    ///         (x > 50).then_some(x)
+    ///     })
+    ///     .reduce(|a, b| a + b)
+    ///     .unwrap();
+    ///
+    /// let parallel_result = vals
+    ///     .filter_map_reduce_async(
+    ///         |x: usize| {
+    ///             let x = x.pow(3) % 100;
+    ///             (x > 50).then_some(x)
+    ///         },
+    ///         |a, b| a + b,
+    ///     )
+    ///     .unwrap();
+    ///
+    /// assert_eq!(sequential_result, parallel_result);
+    /// ```
+    fn filter_map_reduce_async<F, R, O>(self, f: F, r: R) -> Option<O>
+    where
+        Self::Item: Send + Sync,
+        O: Send + Sync,
+        F: Fn(Self::Item) -> Option<O> + Send + Sync,
+        R: Fn(O, O) -> O + Send + Sync;
 }
 
-impl<'scope, 'b, I, O> Extend<I> for Threadpool<'scope, 'b, I, O> {
-    fn extend<T: IntoIterator<Item = I>>(&mut self, iter: T) {
-        for item in iter {
-            self.submit(item);
-        }
+impl<T> FilterMapReduceAsync for T
+where
+    T: Iterator + Send + Sync,
+{
+    fn filter_map_reduce_async<F, R, O>(self, f: F, r: R) -> Option<O>
+    where
+        Self::Item: Send + Sync,
+        O: Send + Sync,
+        F: Fn(Self::Item) -> Option<O> + Send + Sync,
+        R: Fn(O, O) -> O + Send + Sync,
+    {
+        scope(|scope| {
+            let pool = Threadpool::new(f, scope);
+            pool.producer(self);
+            pool.into_iter().reduce_async(r)
+        })
     }
 }
