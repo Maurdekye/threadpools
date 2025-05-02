@@ -3,7 +3,7 @@ use std::thread::{self, scope};
 use std::time::Duration;
 use threadpools::{
     FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsync, OrderedThreadpool,
-    ReduceAsync, ReduceAsyncCommutative, Threadpool,
+    ReduceAsyncNoncommutative, ReduceAsync, Threadpool,
 };
 
 fn is_prime(n: usize) -> bool {
@@ -95,7 +95,7 @@ fn async_no_scope_trait_processing() {
 fn reduction() {
     let vals = (0..10000).map(|x: usize| x.pow(3) % 100);
     let sequential_result = vals.clone().reduce(|a, b| a + b);
-    let parallel_result = vals.reduce_async(|a, b| a + b);
+    let parallel_result = vals.reduce_async_noncommutative(|a, b| a + b);
     assert_eq!(sequential_result, parallel_result);
 }
 
@@ -121,7 +121,7 @@ fn map_filter_reduce() {
                 },
                 scope,
             )
-            .reduce_async(|a, b| a + b)
+            .reduce_async_noncommutative(|a, b| a + b)
             .unwrap();
 
         assert_eq!(sequential_result, parallel_result);
@@ -150,7 +150,7 @@ fn map_filter_reduce_unordered() {
             scope,
         );
         pool.producer(vals);
-        let parallel_result = pool.into_iter().reduce_async(|a, b| a + b).unwrap();
+        let parallel_result = pool.into_iter().reduce_async_noncommutative(|a, b| a + b).unwrap();
 
         assert_eq!(sequential_result, parallel_result);
     });
@@ -182,15 +182,14 @@ fn map_filter_reduce_trait() {
     assert_eq!(sequential_result, parallel_result);
 }
 
-#[allow(deprecated)]
 #[test]
 fn reduce_commutative() {
     let str = "qwertyuiopasdfghjklzxcvbnm"
         .chars()
         .map(|x| x.to_string())
         .cycle()
-        .take(1000);
-    let reduced = str.clone().reduce_async_commutative(|a, b| a + &b).unwrap();
+        .take(10000);
+    let reduced = str.clone().reduce_async(|a, b| a + &b).unwrap();
     let sequential_result = str.collect::<Vec<_>>().join("");
     assert_eq!(reduced, sequential_result);
 }

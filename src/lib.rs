@@ -23,10 +23,11 @@ impl<S> Gate<S> {
         Self(Arc::new((Mutex::new(initial_state), Condvar::new())))
     }
 
-    fn update(&self, updater: impl Fn(&mut S)) {
+    fn update<T>(&self, updater: impl FnOnce(&mut S) -> T) -> T {
         let mut state = self.0.0.lock().unwrap();
-        (updater)(&mut state);
+        let result = (updater)(&mut state);
         self.0.1.notify_all();
+        result
     }
 
     fn wait_while(&self, condition: impl Fn(&S) -> bool) {
@@ -41,6 +42,10 @@ impl<S> Gate<S> {
         S: Copy,
     {
         *self.0.0.lock().unwrap()
+    }
+
+    fn into_inner(self) -> S {
+        Arc::into_inner(self.0).unwrap().0.into_inner().unwrap()
     }
 }
 
@@ -57,7 +62,7 @@ pub trait FilterMapReduceAsync: Iterator {
     /// pairs are evaluated does not affect the result), and commutative
     /// (the ordering of the two arguments with regards to each other does not
     /// affect the result), or else the result will be noneterministic.
-    /// 
+    ///
     /// ```
     /// use threadpools::*;
     ///
@@ -105,7 +110,70 @@ where
     {
         scope(|scope| {
             self.filter_map_multithread_async_unordered(f, scope)
-                .reduce_async(r)
+                .reduce_async_noncommutative(r)
         })
+    }
+}
+
+/// Extension trait to provide the `filter_map_reduce_async_ordered` function
+/// for iterators.
+pub trait FilterMapReduceAsyncOrdered: Iterator {
+    /// Combine multithreaded mapping, filtering, and reduction all into a single tidy function call.
+    ///
+    /// Makes use of the ordered [`OrderedThreadpool`] and the commutative reducer
+    /// [`ReduceAsync::reduce_async`] to reduce elements respecting their original ordering.
+    ///
+    /// The reducing function must be associative (ie. the order in which
+    /// pairs are evaluated does not affect the result), but does not need
+    /// to be commutative. If the reducing function is not associative, the
+    /// result will be nondeterministic.
+    ///
+    /// ```
+    /// use threadpools::*;
+    ///
+    /// let chars = "qwertyuiopasdfghjklzxcvbnm"
+    ///     .chars()
+    ///     .cycle()
+    ///     .take(10000);
+    ///
+    /// let sequential_result = chars
+    ///     .clone()
+    ///     .filter_map(|c: char| {
+    ///         (!['a', 'e', 'i', 'o', 'u'].contains(&c)).then(|| c.to_string())
+    ///     })
+    ///     .reduce(|a, b| a + &b)
+    ///     .unwrap();
+    ///
+    /// let parallel_result = chars
+    ///     .filter_map_reduce_async_ordered(
+    ///         |c: char| {
+    ///             (!['a', 'e', 'i', 'o', 'u'].contains(&c)).then(|| c.to_string())
+    ///         },
+    ///         |a, b| a + &b,
+    ///     )
+    ///     .unwrap();
+    ///
+    /// assert_eq!(sequential_result, parallel_result);
+    /// ```
+    fn filter_map_reduce_async_ordered<F, R, O>(self, f: F, r: R) -> Option<O>
+    where
+        Self::Item: Send + Sync,
+        O: Send + Sync,
+        F: Fn(Self::Item) -> Option<O> + Send + Sync,
+        R: Fn(O, O) -> O + Send + Sync;
+}
+
+impl<T> FilterMapReduceAsyncOrdered for T
+where
+    T: Iterator + Send + Sync,
+{
+    fn filter_map_reduce_async_ordered<F, R, O>(self, f: F, r: R) -> Option<O>
+    where
+        Self::Item: Send + Sync,
+        O: Send + Sync,
+        F: Fn(Self::Item) -> Option<O> + Send + Sync,
+        R: Fn(O, O) -> O + Send + Sync,
+    {
+        scope(|scope| self.filter_map_multithread_async(f, scope).reduce_async(r))
     }
 }
