@@ -3,7 +3,7 @@ use std::thread::{self, scope};
 use std::time::Duration;
 use threadpools::{
     FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsync, OrderedThreadpool,
-    ReduceAsync, Threadpool,
+    ReduceAsync, ReduceAsyncCommutative, Threadpool,
 };
 
 fn is_prime(n: usize) -> bool {
@@ -180,4 +180,17 @@ fn map_filter_reduce_trait() {
         .unwrap();
 
     assert_eq!(sequential_result, parallel_result);
+}
+
+#[allow(deprecated)]
+#[test]
+fn reduce_commutative() {
+    let str = "qwertyuiopasdfghjklzxcvbnm"
+        .chars()
+        .map(|x| x.to_string())
+        .cycle()
+        .take(1000);
+    let reduced = str.clone().reduce_async_commutative(|a, b| a + &b).unwrap();
+    let sequential_result = str.collect::<Vec<_>>().join("");
+    assert_eq!(reduced, sequential_result);
 }

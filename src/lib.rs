@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 #![feature(mpmc_channel)]
+#![feature(new_range_api)]
 
 use std::{
     sync::{Arc, Condvar, Mutex},
@@ -48,10 +49,15 @@ impl<S> Gate<S> {
 pub trait FilterMapReduceAsync: Iterator {
     /// Combine multithreaded mapping, filtering, and reduction all into a single tidy function call.
     ///
-    /// Makes use of the standard [`Threadpool`] to discard the unnecessary overhead introduced by
+    /// Makes use of the standard [`Threadpool`] to discard the additional overhead introduced by
     /// the [`OrderedThreadpool`], which is unnecessary in light of the fact that all the results
     /// end up being reduced down to a single value anyway.
     ///
+    /// The reducing function must be both associative (ie. the order in which
+    /// pairs are evaluated does not affect the result), and commutative
+    /// (the ordering of the two arguments with regards to each other does not
+    /// affect the result), or else the result will be noneterministic.
+    /// 
     /// ```
     /// use threadpools::*;
     ///
@@ -98,9 +104,8 @@ where
         R: Fn(O, O) -> O + Send + Sync,
     {
         scope(|scope| {
-            let pool = Threadpool::new(f, scope);
-            pool.producer(self);
-            pool.into_iter().reduce_async(r)
+            self.filter_map_multithread_async_unordered(f, scope)
+                .reduce_async(r)
         })
     }
 }

@@ -21,27 +21,28 @@ use crate::unordered::Threadpool;
 
 /// An ordered thread pool.
 ///
-/// Maintains much of the same functionality as [`Threadpool`]; refer to the documentation there
-/// for more general information about the thread pools. It maintains much of the same functionality,
-/// implementation details, and limitations, so if not stated otherwise, assume the two pools
+/// Retains much of the same functionality as a normal [`Threadpool`]; refer to the documentation there
+/// for more general information about the thread pools. It maintains many of the same
+/// implementation details and limitations as well, so if not stated otherwise, assume the two pools
 /// work in the same way.
 ///
 /// One implementation difference between this pool and the standard unordered [`Threadpool`] is that
 /// when passing a worker function to [`OrderedThreadpool::with_num_workers_and_thread_id`], alongside
 /// a thread id, the function also receives a monotonically increasing "job index" `usize` value.
-/// *This value does not necessarily represent the original index its corresponding input.* It is simply
+/// *This value does not necessarily represent the original index of its corresponding input.* It is simply
 /// a monotonically increasing value unique among all inputs given to this threadpool. In the event that
 /// this threadpool is used to only process a single iterator, the job index will
 /// represent that index. However, subsequent iterators submitted to the pool will not maintain that property;
-/// the pool will have to be reconstructed if that is desired.
+/// a new pool will have to be constructed if that is desired.
 ///
 /// As this pool is guaranteed to preserve ordering of its inputs, it can be used to perform multithreaded `map`
 /// and `filter` operations on iterators passed to it. As such, it has an additional method
 /// [`OrderedThreadpool::filter_map`]. This works as you would expect, similar to its [`Iterator`] counterpart,
-/// [`Iterator::filter_map`].
+/// [`Iterator::filter_map`]. Some iterator extensions [`FilterMapMultithread::filter_map_multithread`] and
+/// [`FilterMapMultithreadAsync::filter_map_multithread_async`] are available to make this usage pattern even more seamless.
 ///
-/// Of note, in exchange for yielding ordered outputs, results are no longer guaranteed to return in the order that
-/// they are finished; indeed, results returned sooner than indented are placed inside a buffer, which also uses some
+/// Of note, in exchange for yielding ordered outputs, results are no longer guaranteed to return immediately once they
+/// finish processing; there may be some delay, as results returned sooner than indented are placed inside a buffer, which also uses some
 /// additional amount of memory.
 pub struct OrderedThreadpool<'scope, 'env, I, O> {
     scope: &'scope Scope<'scope, 'env>,
@@ -348,16 +349,22 @@ impl<'scope, 'env, I, O> IntoIterator for OrderedThreadpool<'scope, 'env, I, O> 
     }
 }
 
+/// Extension trait to provide the `filter_map_multithread_async` function
+/// for iterators.
 pub trait FilterMapMultithreadAsync<'scope> {
-    /// Shortcut extension trait for iterators that constructs a new
+    /// Constructs a new
     /// [`OrderedThreadpool`] and uses it to map the iterator
-    /// with the passed function. 
-    /// 
-    /// Yields items in order as they become available, as soon
-    /// as possible.
-    /// 
+    /// with the passed function in parallel.
+    ///
+    /// Yields items in send order as they become available, as soon
+    /// as possible, preserving the original order of the input.
+    ///
     /// Requires a [`Scope`] be passed in order to encapsulate
-    /// the lifetime of the threads that the pool spawns.
+    /// the lifetime of the threads that the pool spawns, which is
+    /// necessary in order to serve results asynchronously as they arrive.
+    ///
+    /// For a version of this function that does not require a
+    /// scope, see [`FilterMapMultithread::filter_map_multithread`]
     fn filter_map_multithread_async<'env, F, O>(
         self,
         f: F,
@@ -374,7 +381,6 @@ impl<'scope, T> FilterMapMultithreadAsync<'scope> for T
 where
     T: Iterator + Send + Sync + 'scope,
 {
-    
     fn filter_map_multithread_async<'env, F, O>(
         self,
         f: F,
@@ -395,15 +401,15 @@ where
 /// Extension trait to provide the `filter_map_multithread` function
 /// for iterators.
 pub trait FilterMapMultithread {
-    /// Shortcut extension trait for iterators that constructs a new
+    /// Constructs a new
     /// [`OrderedThreadpool`] and uses it to map the iterator
-    /// with the passed function. 
-    /// 
+    /// with the passed function in parallel.
+    ///
     /// Parses and collects the full result into a [`Vec`] before returning.
-    /// 
-    /// Unlike [`FilterMapMultithreadAsync::filter_map_multithread_async`], 
-    /// does not require a [`Scope`] to be provided, as all threads are 
-    /// cleaned up by the time work is done.
+    ///
+    /// Unlike [`FilterMapMultithreadAsync::filter_map_multithread_async`],
+    /// calling this function does not require a [`Scope`] to be provided, 
+    /// as all threads are cleaned up by the time work is done.
     fn filter_map_multithread<F, O>(self, f: F) -> Vec<O>
     where
         O: Send + Sync,

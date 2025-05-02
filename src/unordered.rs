@@ -14,6 +14,10 @@ use std::{
 
 use crate::Gate;
 
+// imports for documentation
+#[allow(unused_imports)]
+use crate::ordered::FilterMapMultithreadAsync;
+
 /// A thread pool.
 ///
 /// Allows the multithreaded processing of elements, either by submitting
@@ -263,5 +267,56 @@ impl<'scope, 'env, I, O> IntoIterator for Threadpool<'scope, 'env, I, O> {
     fn into_iter(self) -> Self::IntoIter {
         drop(self.work_submission);
         self.work_reception.into_iter()
+    }
+}
+
+
+/// Extension trait to provide the `filter_map_multithread_async_unordered` function
+/// for iterators.
+pub trait FilterMapMultithreadAsyncUnordered<'scope> {
+    /// Constructs a new
+    /// [`Threadpool`] and uses it to map the iterator
+    /// with the passed function in parallel.
+    ///
+    /// Yields items in arbitrary order as they finish processing, as soon
+    /// as possible. Does not preserve the original order of the input iterator.
+    ///
+    /// Requires a [`Scope`] be passed in order to encapsulate
+    /// the lifetime of the threads that the pool spawns, which is
+    /// necessary in order to serve results asynchronously as they arrive.
+    /// 
+    /// For a version of this function that retains the original
+    /// ordering of the input iterator, see 
+    /// [`FilterMapMultithreadAsync::filter_map_multithread_async`]
+    fn filter_map_multithread_async_unordered<'env, F, O>(
+        self,
+        f: F,
+        scope: &'scope Scope<'scope, 'env>,
+    ) -> impl Iterator<Item = O> + 'scope
+    where
+        O: Send + Sync + 'scope,
+        Self: Iterator,
+        Self::Item: Send + Sync + 'scope,
+        F: Fn(Self::Item) -> Option<O> + Send + Sync + 'scope;
+}
+
+impl<'scope, T> FilterMapMultithreadAsyncUnordered<'scope> for T
+where
+    T: Iterator + Send + Sync + 'scope,
+{
+    fn filter_map_multithread_async_unordered<'env, F, O>(
+        self,
+        f: F,
+        scope: &'scope Scope<'scope, 'env>,
+    ) -> impl Iterator<Item = O> + 'scope
+    where
+        O: Send + Sync + 'scope,
+        Self: Iterator + 'scope,
+        T::Item: Send + Sync + 'scope,
+        F: Fn(T::Item) -> Option<O> + Send + Sync + 'scope,
+    {
+        let pool = Threadpool::new(f, scope);
+        pool.producer(self);
+        pool.into_iter()
     }
 }
