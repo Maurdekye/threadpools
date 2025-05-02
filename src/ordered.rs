@@ -136,6 +136,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
                         .map(|item| item.0 == least_index)
                         .unwrap_or(false)
                     {
+                        // eprintln!("releasing {least_index}");
                         if let Some(item) = buffer.pop_front().unwrap().1 {
                             filer_outbox.send(item).unwrap()
                         }

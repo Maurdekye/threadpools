@@ -2,8 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, scope};
 use std::time::Duration;
 use threadpools::{
-    FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsync, OrderedThreadpool,
-    ReduceAsyncNoncommutative, ReduceAsync, Threadpool,
+    FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsync,
+    FilterMapReduceAsyncOrdered, OrderedThreadpool, ReduceAsync, ReduceAsyncNoncommutative,
+    Threadpool,
 };
 
 fn is_prime(n: usize) -> bool {
@@ -150,7 +151,10 @@ fn map_filter_reduce_unordered() {
             scope,
         );
         pool.producer(vals);
-        let parallel_result = pool.into_iter().reduce_async_noncommutative(|a, b| a + b).unwrap();
+        let parallel_result = pool
+            .into_iter()
+            .reduce_async_noncommutative(|a, b| a + b)
+            .unwrap();
 
         assert_eq!(sequential_result, parallel_result);
     });
@@ -192,4 +196,24 @@ fn reduce_commutative() {
     let reduced = str.clone().reduce_async(|a, b| a + &b).unwrap();
     let sequential_result = str.collect::<Vec<_>>().join("");
     assert_eq!(reduced, sequential_result);
+}
+
+#[test]
+fn test_filter_map_reduce_ordered() {
+    let chars = "qwertyuiopasdfghjklzxcvbnm".chars().cycle().take(10000);
+
+    let sequential_result = chars
+        .clone()
+        .filter_map(|c: char| (!['a', 'e', 'i', 'o', 'u'].contains(&c)).then(|| c.to_string()))
+        .reduce(|a, b| a + &b)
+        .unwrap();
+
+    let parallel_result = chars
+        .filter_map_reduce_async_ordered(
+            |c: char| (!['a', 'e', 'i', 'o', 'u'].contains(&c)).then(|| c.to_string()),
+            |a, b| a + &b,
+        )
+        .unwrap();
+
+    assert_eq!(sequential_result, parallel_result);
 }

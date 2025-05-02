@@ -7,7 +7,6 @@ use std::{
     collections::VecDeque,
     ops::ControlFlow::{self, *},
     sync::{
-        Condvar,
         atomic::{AtomicBool, Ordering},
         mpmc::channel,
     },
@@ -166,38 +165,40 @@ impl<T> RangeQueue<T> {
     }
 }
 
-fn reduce_async_commutative_inner<I, F>(it: I, f: F) -> Option<I::Item>
+fn reduce_async_commutative_inner<I, F>(iter: I, f: F) -> Option<I::Item>
 where
     I: Iterator,
     I::Item: Send + Sync,
     F: Fn(I::Item, I::Item) -> I::Item + Send + Sync,
 {
     let queue = Gate::new(RangeQueue::new());
-    let work_finished = Condvar::new();
+    let work_finished = AtomicBool::new(false);
     scope(|scope| {
         let num_cpus: usize = available_parallelism().map(usize::from).unwrap_or(1);
         (0..num_cpus).for_each(|_| {
-            let f = &f;
-            let work_finished = &work_finished;
             scope.spawn(|| {
                 loop {
                     match queue.update(|queue| queue.pop_pair()) {
-                        Break(()) => break,
+                        Break(()) => {
+                            if work_finished.load(Ordering::Acquire) {
+                                break;
+                            }
+                        }
                         Continue(pair) => {
                             if let Some(((left_item, left_range), (right_item, right_range))) = pair
                             {
                                 let combined_item = f(left_item, right_item);
                                 let combined_range = (left_range.start..=right_range.end).into();
                                 queue.update(|queue| queue.insert(combined_item, combined_range));
-                                work_finished.notify_all();
                             }
                         }
                     }
                 }
             });
         });
-        it.enumerate()
+        iter.enumerate()
             .for_each(|(i, elem)| queue.update(|queue| queue.insert(elem, (i..=i).into())));
+        work_finished.store(true, Ordering::Release);
         queue.wait_while(|queue| queue.0.len() > 1);
     });
     queue.into_inner().0.pop_front().map(|x| x.0)
@@ -212,7 +213,7 @@ pub trait ReduceAsync: Iterator {
     /// pairs are evaluated does not affect the result), but does not need
     /// to be commutative. If the reducing function is not associative, the
     /// result will be nondeterministic.
-    /// 
+    ///
     /// For a faster (but noncommutative) version, see
     /// [`ReduceAsyncNoncommutative::reduce_async_noncommutative`]
     ///
