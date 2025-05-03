@@ -7,18 +7,18 @@ use std::{
     collections::VecDeque,
     ops::ControlFlow::{self, *},
     sync::{
+        Mutex,
         atomic::{AtomicBool, Ordering},
         mpmc::channel,
     },
-    thread::{available_parallelism, scope},
+    thread::{self, available_parallelism, scope},
 };
 
 // imports for documentation
-use crate::Gate;
 #[allow(unused_imports)]
 use crate::{OrderedThreadpool, Threadpool};
 
-fn reduce_async_noncommutative_inner<I, F>(it: I, f: F) -> Option<I::Item>
+fn reduce_async_commutative_inner<I, F>(it: I, f: F) -> Option<I::Item>
 where
     I: Iterator,
     I::Item: Send + Sync,
@@ -49,6 +49,7 @@ where
                         if work_finished.load(Ordering::Acquire) {
                             break;
                         }
+                        thread::yield_now();
                     }
                     stock
                 })
@@ -67,16 +68,17 @@ where
 
 /// Extension trait to provide the `reduce_async_noncommutative` function
 /// for iterators.
-pub trait ReduceAsyncNoncommutative: Iterator {
-    /// Reduce an iterator in parallel, without respect to commutativity.
+pub trait ReduceAsyncCommutative: Iterator {
+    /// Reduce an iterator in parallel, without respect to the ordering
+    /// of the input elements.
     ///
     /// The reducing function must be both associative (ie. the order in which
     /// pairs are evaluated does not affect the result), and commutative
     /// (the ordering of the two arguments with regards to each other does not
     /// affect the result), or else the result will be nondeterministic.
     ///
-    /// For a version that respects commutativity (but is slower), see
-    /// [`ReduceAsync::reduce_async`]
+    /// For a reducer that does not require commutativity of the reducing function
+    /// (but is slower), see [`ReduceAsync::reduce_async`]
     ///
     /// Pairs nicely when chained with the result of one
     /// or more [`Threadpool`]s.
@@ -105,29 +107,29 @@ pub trait ReduceAsyncNoncommutative: Iterator {
     ///             },
     ///             scope,
     ///         )
-    ///         .reduce_async_noncommutative(|a, b| a + b)
+    ///         .reduce_async_commutative(|a, b| a + b)
     ///         .unwrap();
     ///    
     ///     assert_eq!(sequential_result, parallel_result);
     /// })
     /// ```
-    fn reduce_async_noncommutative<F>(self, f: F) -> Option<Self::Item>
+    fn reduce_async_commutative<F>(self, f: F) -> Option<Self::Item>
     where
         Self::Item: Send + Sync,
         F: Fn(Self::Item, Self::Item) -> Self::Item + Send + Sync;
 }
 
-impl<I> ReduceAsyncNoncommutative for I
+impl<I> ReduceAsyncCommutative for I
 where
     I: Iterator,
     I::Item: Send + Sync,
 {
-    fn reduce_async_noncommutative<F>(self, f: F) -> Option<Self::Item>
+    fn reduce_async_commutative<F>(self, f: F) -> Option<Self::Item>
     where
         Self::Item: Send + Sync,
         F: Fn(Self::Item, Self::Item) -> Self::Item + Send + Sync,
     {
-        reduce_async_noncommutative_inner(self, f)
+        reduce_async_commutative_inner(self, f)
     }
 }
 
@@ -165,20 +167,21 @@ impl<T> RangeQueue<T> {
     }
 }
 
-fn reduce_async_commutative_inner<I, F>(iter: I, f: F) -> Option<I::Item>
+fn reduce_async_noncommutative_inner<I, F>(iter: I, f: F) -> Option<I::Item>
 where
     I: Iterator,
     I::Item: Send + Sync,
     F: Fn(I::Item, I::Item) -> I::Item + Send + Sync,
 {
-    let queue = Gate::new(RangeQueue::new());
+    let queue = Mutex::new(RangeQueue::new());
     let work_finished = AtomicBool::new(false);
     scope(|scope| {
         let num_cpus: usize = available_parallelism().map(usize::from).unwrap_or(1);
         (0..num_cpus).for_each(|_| {
             scope.spawn(|| {
                 loop {
-                    match queue.update(|queue| queue.pop_pair()) {
+                    let pair = queue.lock().unwrap().pop_pair();
+                    match pair {
                         Break(()) => {
                             if work_finished.load(Ordering::Acquire) {
                                 break;
@@ -189,33 +192,34 @@ where
                             {
                                 let combined_item = f(left_item, right_item);
                                 let combined_range = (left_range.start..=right_range.end).into();
-                                queue.update(|queue| queue.insert(combined_item, combined_range));
+                                queue.lock().unwrap().insert(combined_item, combined_range);
                             }
                         }
                     }
+                    thread::yield_now();
                 }
             });
         });
         iter.enumerate()
-            .for_each(|(i, elem)| queue.update(|queue| queue.insert(elem, (i..=i).into())));
+            .for_each(|(i, elem)| queue.lock().unwrap().insert(elem, (i..=i).into()));
         work_finished.store(true, Ordering::Release);
-        queue.wait_while(|queue| queue.0.len() > 1);
     });
-    queue.into_inner().0.pop_front().map(|x| x.0)
+    queue.into_inner().unwrap().0.pop_front().map(|x| x.0)
 }
 
 /// Extension trait to provide the `reduce_async` function
 /// for iterators.
 pub trait ReduceAsync: Iterator {
-    /// Reduce an iterator in parallel, respecting commutativity.
+    /// Reduce an iterator in parallel, respecting the ordering of the
+    /// input elements.
     ///
     /// The reducing function must be associative (ie. the order in which
     /// pairs are evaluated does not affect the result), but does not need
     /// to be commutative. If the reducing function is not associative, the
     /// result will be nondeterministic.
     ///
-    /// For a faster (but noncommutative) version, see
-    /// [`ReduceAsyncNoncommutative::reduce_async_noncommutative`]
+    /// For a faster reducer (but requires the reducing function to be commutative)
+    /// see [`ReduceAsyncCommutative::reduce_async_commutative`]
     ///
     /// Pairs nicely when chained with the result of one
     /// or more [`OrderedThreadpool`]s.
@@ -250,6 +254,6 @@ where
         Self::Item: Send + Sync,
         F: Fn(Self::Item, Self::Item) -> Self::Item + Send + Sync,
     {
-        reduce_async_commutative_inner(self, f)
+        reduce_async_noncommutative_inner(self, f)
     }
 }

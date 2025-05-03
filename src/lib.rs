@@ -43,10 +43,6 @@ impl<S> Gate<S> {
     {
         *self.0.0.lock().unwrap()
     }
-
-    fn into_inner(self) -> S {
-        Arc::into_inner(self.0).unwrap().0.into_inner().unwrap()
-    }
 }
 
 /// Extension trait to provide the `filter_map_reduce_async` function
@@ -61,7 +57,7 @@ pub trait FilterMapReduceAsync: Iterator {
     /// The reducing function must be both associative (ie. the order in which
     /// pairs are evaluated does not affect the result), and commutative
     /// (the ordering of the two arguments with regards to each other does not
-    /// affect the result), or else the result will be noneterministic.
+    /// affect the result), or else the result will be nondeterministic.
     ///
     /// ```
     /// use threadpools::*;
@@ -110,7 +106,7 @@ where
     {
         scope(|scope| {
             self.filter_map_multithread_async_unordered(f, scope)
-                .reduce_async_noncommutative(r)
+                .reduce_async_commutative(r)
         })
     }
 }
