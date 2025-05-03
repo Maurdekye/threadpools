@@ -7,7 +7,7 @@ use std::{
     num::NonZeroUsize,
     sync::{
         Arc, Mutex,
-        mpmc::{IntoIter, Receiver, Sender, channel},
+        mpmc::{IntoIter, Receiver, Sender, channel, sync_channel},
         mpsc::TryRecvError,
     },
     thread::{self, Scope, ScopedJoinHandle, scope},
@@ -78,10 +78,10 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
         I: Send + Sync + 'scope,
         O: Send + Sync + 'scope,
     {
-        Self::with_num_workers_and_thread_id(move |x, _, _| f(x), scope, num_cpus())
+        Self::new_custom(move |x, _, _| f(x), scope, num_cpus(), false)
     }
 
-    /// Construct an [`OrderedThreadpool`] with a specific number of workers.
+    /// Construct an [`OrderedThreadpool`] with more detailed custom configuration.
     ///
     /// Provide a function that workers will use to process elements,
     /// and a [`Scope`] that the pool will use to spawn worker threads
@@ -91,17 +91,26 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
     /// also receives two `usize`s. The first represents the job index of the
     /// element submitted, and the second represents the thread id, which can be
     /// used to distinguish between individual workers in the pool.
-    pub fn with_num_workers_and_thread_id<F>(
+    ///
+    /// If `blocking_submission` is set to `true`, then any thread submitting
+    /// a job to the threadpool will block until a worker is available to take it.
+    /// If set to false, then all jobs will be accepted instantly and put in a work queue.
+    pub fn new_custom<F>(
         f: F,
         scope: &'scope Scope<'scope, 'env>,
         num_workers: NonZeroUsize,
+        blocking_submission: bool,
     ) -> Self
     where
         F: Fn(I, usize, usize) -> Option<O> + Send + Sync + 'scope,
         I: Send + Sync + 'scope,
         O: Send + Sync + 'scope,
     {
-        let (work_submission, inbox) = channel();
+        let (work_submission, inbox) = if blocking_submission {
+            sync_channel(0)
+        } else {
+            channel()
+        };
         let (outbox, filer_inbox) = channel();
         let (filer_outbox, work_reception) = channel();
         let in_flight = Gate::new(0usize);

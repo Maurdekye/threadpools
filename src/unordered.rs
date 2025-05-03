@@ -6,7 +6,7 @@ use std::{
     num::NonZeroUsize,
     sync::{
         Arc,
-        mpmc::{IntoIter, Receiver, Sender, channel},
+        mpmc::{IntoIter, Receiver, Sender, channel, sync_channel},
         mpsc::TryRecvError,
     },
     thread::{self, Scope, ScopedJoinHandle},
@@ -81,10 +81,10 @@ impl<'scope, 'env, I, O> Threadpool<'scope, 'env, I, O> {
         I: Send + Sync + 'scope,
         O: Send + Sync + 'scope,
     {
-        Self::with_num_workers_and_thread_id(move |x, _| f(x), scope, num_cpus())
+        Self::new_custom(move |x, _| f(x), scope, num_cpus(), false)
     }
 
-    /// Construct a [`Threadpool`] with a specific number of workers.
+    /// Construct a [`Threadpool`] with more detailed custom configuration.
     ///
     /// Provide a function that workers will use to process elements,
     /// and a [`Scope`] that the pool will use to spawn worker threads
@@ -93,17 +93,26 @@ impl<'scope, 'env, I, O> Threadpool<'scope, 'env, I, O> {
     /// In addition to the input element `I`, the worker function
     /// also receives a `usize` representing the thread id, which can be
     /// used to distinguish between individual workers in the pool.
-    pub fn with_num_workers_and_thread_id<F>(
+    ///
+    /// If `blocking_submission` is set to `true`, then any thread submitting
+    /// a job to the threadpool will block until a worker is available to take it.
+    /// If set to false, then all jobs will be accepted instantly and put in a work queue.
+    pub fn new_custom<F>(
         f: F,
         scope: &'scope Scope<'scope, 'env>,
         num_workers: NonZeroUsize,
+        blocking_submission: bool,
     ) -> Self
     where
         F: Fn(I, usize) -> Option<O> + Send + Sync + 'scope,
         I: Send + Sync + 'scope,
         O: Send + Sync + 'scope,
     {
-        let (work_submission, inbox) = channel();
+        let (work_submission, inbox) = if blocking_submission {
+            sync_channel(0)
+        } else {
+            channel()
+        };
         let (outbox, work_reception) = channel();
         let in_flight = Gate::new(0usize);
         let producers_active = Gate::new(0);
@@ -152,7 +161,7 @@ where
         self.in_flight.update(|x| *x += 1);
         self.work_submission.send(input).unwrap()
     }
-    
+
     fn recv(&self) -> O {
         self.work_reception.recv().unwrap()
     }

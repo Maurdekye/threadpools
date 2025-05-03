@@ -1,6 +1,6 @@
 [package]
 name = "threadpools"
-version = "5.0.1"
+version = "6.0.0"
 edition = "2024"
 license = "MIT"
 description = "Efficient, configurable, zero-dependency thread pool implementations. Flexible and usable for a wide variety of applications."
