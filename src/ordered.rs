@@ -88,7 +88,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
     /// and any producer / consumer threads.
     ///
     /// In addition to the input element `I`, the worker function
-    /// also receives two `usize`s. The first represents the index of the
+    /// also receives two `usize`s. The first represents the job index of the
     /// element submitted, and the second represents the thread id, which can be
     /// used to distinguish between individual workers in the pool.
     pub fn with_num_workers_and_thread_id<F>(
@@ -127,21 +127,28 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
                 let mut buffer: VecDeque<(usize, Option<O>)> = VecDeque::new();
                 let mut least_index = 0;
                 for (index, result) in filer_inbox {
-                    let insert_index = buffer
-                        .binary_search_by_key(&index, |&(i, _)| i)
-                        .expect_err("index should never already be present in the buffer");
-                    buffer.insert(insert_index, (index, result));
-                    while buffer
-                        .front()
-                        .map(|item| item.0 == least_index)
-                        .unwrap_or(false)
-                    {
-                        // eprintln!("releasing {least_index}");
-                        if let Some(item) = buffer.pop_front().unwrap().1 {
+                    if index == least_index {
+                        if let Some(item) = result {
                             filer_outbox.send(item).unwrap()
                         }
                         in_flight.update(|x| *x = x.saturating_sub(1));
                         least_index += 1;
+                        while buffer
+                            .front()
+                            .map(|item| item.0 == least_index)
+                            .unwrap_or(false)
+                        {
+                            if let Some(item) = buffer.pop_front().unwrap().1 {
+                                filer_outbox.send(item).unwrap()
+                            }
+                            in_flight.update(|x| *x = x.saturating_sub(1));
+                            least_index += 1;
+                        }
+                    } else {
+                        let insert_index = buffer
+                            .binary_search_by_key(&index, |&(i, _)| i)
+                            .expect_err("index should never already be present in the buffer");
+                        buffer.insert(insert_index, (index, result));
                     }
                 }
                 // ideally buffer should be empty by now, but clear it out just to be safe
