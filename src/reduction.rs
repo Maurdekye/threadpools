@@ -11,9 +11,10 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpmc::channel,
     },
-    thread::{self, available_parallelism, scope},
+    thread::{self, scope},
 };
 
+use crate::num_cpus;
 // imports for documentation
 #[allow(unused_imports)]
 use crate::{OrderedThreadpool, Threadpool};
@@ -27,8 +28,7 @@ where
     let work_finished = AtomicBool::new(false);
     scope(|scope| {
         let (outbox, inbox) = channel();
-        let num_cpus: usize = available_parallelism().map(usize::from).unwrap_or(1);
-        let workers: Vec<_> = (0..num_cpus)
+        let workers: Vec<_> = (0..num_cpus().into())
             .map(|_| {
                 let inbox = inbox.clone();
                 let outbox = outbox.clone();
@@ -176,8 +176,7 @@ where
     let queue = Mutex::new(RangeQueue::new());
     let work_finished = AtomicBool::new(false);
     scope(|scope| {
-        let num_cpus: usize = available_parallelism().map(usize::from).unwrap_or(1);
-        (0..num_cpus).for_each(|_| {
+        (0..num_cpus().into()).for_each(|_| {
             scope.spawn(|| {
                 loop {
                     let pair = queue.lock().unwrap().pop_pair();

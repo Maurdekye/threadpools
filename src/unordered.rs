@@ -9,10 +9,10 @@ use std::{
         mpmc::{IntoIter, Receiver, Sender, channel},
         mpsc::TryRecvError,
     },
-    thread::{self, Scope, ScopedJoinHandle, available_parallelism},
+    thread::{self, Scope, ScopedJoinHandle},
 };
 
-use crate::Gate;
+use crate::{Gate, num_cpus};
 
 // imports for documentation
 #[allow(unused_imports)]
@@ -75,11 +75,7 @@ impl<'scope, 'env, I, O> Threadpool<'scope, 'env, I, O> {
         I: Send + Sync + 'scope,
         O: Send + Sync + 'scope,
     {
-        Self::with_num_workers_and_thread_id(
-            move |x, _| f(x),
-            scope,
-            available_parallelism().unwrap_or(NonZeroUsize::MIN),
-        )
+        Self::with_num_workers_and_thread_id(move |x, _| f(x), scope, num_cpus())
     }
 
     /// Construct a [`Threadpool`] with a specific number of workers.
@@ -270,7 +266,6 @@ impl<'scope, 'env, I, O> IntoIterator for Threadpool<'scope, 'env, I, O> {
     }
 }
 
-
 /// Extension trait to provide the `filter_map_multithread_async_unordered` function
 /// for iterators.
 pub trait FilterMapMultithreadAsyncUnordered<'scope> {
@@ -284,9 +279,9 @@ pub trait FilterMapMultithreadAsyncUnordered<'scope> {
     /// Requires a [`Scope`] be passed in order to encapsulate
     /// the lifetime of the threads that the pool spawns, which is
     /// necessary in order to serve results asynchronously as they arrive.
-    /// 
+    ///
     /// For a version of this function that retains the original
-    /// ordering of the input iterator, see 
+    /// ordering of the input iterator, see
     /// [`FilterMapMultithreadAsync::filter_map_multithread_async`]
     fn filter_map_multithread_async_unordered<'env, F, O>(
         self,

@@ -3,8 +3,7 @@
 #![feature(new_range_api)]
 
 use std::{
-    sync::{Arc, Condvar, Mutex},
-    thread::scope,
+    num::NonZeroUsize, sync::{Arc, Condvar, Mutex}, thread::{available_parallelism, scope}
 };
 
 pub use ordered::*;
@@ -14,6 +13,10 @@ pub use unordered::*;
 pub mod ordered;
 pub mod reduction;
 pub mod unordered;
+
+fn num_cpus() -> NonZeroUsize {
+    available_parallelism().unwrap_or(NonZeroUsize::MIN)
+}
 
 #[derive(Clone)]
 struct Gate<S>(Arc<(Mutex<S>, Condvar)>);

@@ -10,10 +10,10 @@ use std::{
         mpmc::{IntoIter, Receiver, Sender, channel},
         mpsc::TryRecvError,
     },
-    thread::{self, Scope, ScopedJoinHandle, available_parallelism, scope},
+    thread::{self, Scope, ScopedJoinHandle, scope},
 };
 
-use crate::Gate;
+use crate::{Gate, num_cpus};
 
 // imports for documentation
 #[allow(unused_imports)]
@@ -74,11 +74,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
         I: Send + Sync + 'scope,
         O: Send + Sync + 'scope,
     {
-        Self::with_num_workers_and_thread_id(
-            move |x, _, _| f(x),
-            scope,
-            available_parallelism().unwrap_or(NonZeroUsize::MIN),
-        )
+        Self::with_num_workers_and_thread_id(move |x, _, _| f(x), scope, num_cpus())
     }
 
     /// Construct an [`OrderedThreadpool`] with a specific number of workers.
@@ -409,7 +405,7 @@ pub trait FilterMapMultithread {
     /// Parses and collects the full result into a [`Vec`] before returning.
     ///
     /// Unlike [`FilterMapMultithreadAsync::filter_map_multithread_async`],
-    /// calling this function does not require a [`Scope`] to be provided, 
+    /// calling this function does not require a [`Scope`] to be provided,
     /// as all threads are cleaned up by the time work is done.
     fn filter_map_multithread<F, O>(self, f: F) -> Vec<O>
     where
