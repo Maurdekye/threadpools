@@ -31,7 +31,7 @@ use std::thread::available_parallelism;
 /// work in the same way.
 ///
 /// One implementation difference between this pool and the standard unordered [`Threadpool`] is that
-/// when passing a worker function to [`OrderedThreadpool::with_num_workers_and_thread_id`], alongside
+/// when passing a worker function to [`OrderedThreadpool::new_custom`], alongside
 /// a thread id, the function also receives a monotonically increasing "job index" `usize` value.
 /// *This value does not necessarily represent the original index of its corresponding input.* It is simply
 /// a monotonically increasing value unique among all inputs given to this threadpool. In the event that
@@ -71,7 +71,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
     /// By default, the number of workers spawned is determined by the
     /// result of [`available_parallelism`].
     /// To specify the specific number of workers to spawn, use
-    /// [`OrderedThreadpool::with_num_workers_and_thread_id`] instead.
+    /// [`OrderedThreadpool::new_custom`] instead.
     pub fn new<F>(f: F, scope: &'scope Scope<'scope, 'env>) -> Self
     where
         F: Fn(I) -> Option<O> + Send + Sync + 'scope,
