@@ -95,33 +95,29 @@ scope(|scope| {
 
 ```rust
 use threadpools::*;
-use std::thread::scope;
 
-scope(|scope| {
-    let vals = 0..10000usize;
+let vals = 0..10000usize;
 
-    let sequential_result = vals
-        .clone()
-        .filter_map(|x: usize| {
+let sequential_result = vals
+    .clone()
+    .filter_map(|x: usize| {
+        let x = x.pow(3) % 100;
+        (x > 50).then_some(x)
+    })
+    .reduce(|a, b| a + b)
+    .unwrap();
+
+let parallel_result = vals
+    .filter_map_reduce_async_unordered(
+        |x: usize| {
             let x = x.pow(3) % 100;
             (x > 50).then_some(x)
-        })
-        .reduce(|a, b| a + b)
-        .unwrap();
+        },
+        |a, b| a + b,
+    )
+    .unwrap();
 
-    let parallel_result = vals
-        .filter_map_multithread_async(
-            |x: usize| {
-                let x = x.pow(3) % 100;
-                (x > 50).then_some(x)
-            },
-            scope,
-        )
-        .reduce_async(|a, b| a + b)
-        .unwrap();
-
-    assert_eq!(sequential_result, parallel_result);
-})
+assert_eq!(sequential_result, parallel_result);
 ```
 
 ---
