@@ -18,8 +18,12 @@ use crate::{Gate, num_cpus};
 // imports for documentation
 #[allow(unused_imports)]
 use crate::unordered::Threadpool;
+#[allow(unused_imports)]
+use std::thread::available_parallelism;
 
 /// An ordered thread pool.
+/// 
+/// Yields results in the same order they are submitted to the pool.
 ///
 /// Retains much of the same functionality as a normal [`Threadpool`]; refer to the documentation there
 /// for more general information about the thread pools. It maintains many of the same
@@ -65,7 +69,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
     /// and any producer / consumer threads.
     ///
     /// By default, the number of workers spawned is determined by the
-    /// result of [`available_parallelism()`].
+    /// result of [`available_parallelism`].
     /// To specify the specific number of workers to spawn, use
     /// [`OrderedThreadpool::with_num_workers_and_thread_id`] instead.
     pub fn new<F>(f: F, scope: &'scope Scope<'scope, 'env>) -> Self

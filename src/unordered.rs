@@ -16,9 +16,15 @@ use crate::{Gate, num_cpus};
 
 // imports for documentation
 #[allow(unused_imports)]
-use crate::ordered::FilterMapMultithreadAsync;
+use crate::ordered::{FilterMapMultithreadAsync, OrderedThreadpool};
+#[allow(unused_imports)]
+use std::thread::available_parallelism;
 
 /// A thread pool.
+///
+/// Yields results as soon as possible, in arbitrary output order.
+///
+/// If retaining the original order of submitted jobs is desired, see [`OrderedThreadpool`].
 ///
 /// Allows the multithreaded processing of elements, either by submitting
 /// jobs one at a time via [`Threadpool::submit`], via an iterator with [`Threadpool::submit_all`],
@@ -66,7 +72,7 @@ impl<'scope, 'env, I, O> Threadpool<'scope, 'env, I, O> {
     /// and any producer / consumer threads.
     ///
     /// By default, the number of workers spawned is determined by the
-    /// result of [`available_parallelism()`].
+    /// result of [`available_parallelism`].
     /// To specify the specific number of workers to spawn, use
     /// [`Threadpool::with_num_workers_and_thread_id`] instead.
     pub fn new<F>(f: F, scope: &'scope Scope<'scope, 'env>) -> Self
