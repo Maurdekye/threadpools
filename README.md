@@ -13,6 +13,16 @@ Thread pools can be used for many purposes: they can be spawned momentarily to p
 
 Additionally, this library provides a little helper utility [`ReduceAsync::reduce_async`], which implements a unique feedback-loop style fully parallelized reducing algorithm. It pairs nicely when combined with the thread pools, so there are a suite of filtering, mapping, and reduction extensions available to make including its use in your code simple and straightforward. 
 
+These are all the current iteration extensions implemented in this library:
+
+ * [`FilterMapMultithread::filter_map_multithread`]
+ * [`FilterMapMultithreadAsync::filter_map_multithread_async`]
+ * [`FilterMapMultithreadAsyncUnordered::filter_map_multithread_async_unordered`]
+ * [`ReduceAsync::reduce_async`]
+ * [`ReduceAsyncCommutative::reduce_async_commutative`]
+ * [`FilterMapReduceAsync::filter_map_reduce_async`]
+ * [`FilterMapReduceAsyncUnordered::filter_map_reduce_async_unordered`]
+
 TL;DR: Spawn a thread pool, use it to asynchronously process data, then discard it once you finish. Or don't, I'm not your dad.
 
 ## Examples

@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, scope};
 use std::time::Duration;
 use threadpools::{
-    FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsync,
-    FilterMapReduceAsyncOrdered, OrderedThreadpool, ReduceAsync, ReduceAsyncCommutative,
+    FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsyncUnordered,
+    FilterMapReduceAsync, OrderedThreadpool, ReduceAsync, ReduceAsyncCommutative,
     Threadpool,
 };
 
@@ -174,7 +174,7 @@ fn map_filter_reduce_trait() {
         .unwrap();
 
     let parallel_result = vals
-        .filter_map_reduce_async(
+        .filter_map_reduce_async_unordered(
             |x: usize| {
                 let x = x.pow(3) % 100;
                 (x > 50).then_some(x)
@@ -209,7 +209,7 @@ fn test_filter_map_reduce_ordered() {
         .unwrap();
 
     let parallel_result = chars
-        .filter_map_reduce_async_ordered(
+        .filter_map_reduce_async(
             |c: char| (!['a', 'e', 'i', 'o', 'u'].contains(&c)).then(|| c.to_string()),
             |a, b| a + &b,
         )

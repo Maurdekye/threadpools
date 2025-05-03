@@ -4,4 +4,4 @@ version = 4
 
 [[package]]
 name = "threadpools"
-version = "3.0.1"
+version = "4.0.0"

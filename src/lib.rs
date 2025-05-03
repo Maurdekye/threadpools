@@ -3,7 +3,9 @@
 #![feature(new_range_api)]
 
 use std::{
-    num::NonZeroUsize, sync::{Arc, Condvar, Mutex}, thread::{available_parallelism, scope}
+    num::NonZeroUsize,
+    sync::{Arc, Condvar, Mutex},
+    thread::{available_parallelism, scope},
 };
 
 pub use ordered::*;
@@ -48,9 +50,9 @@ impl<S> Gate<S> {
     }
 }
 
-/// Extension trait to provide the `filter_map_reduce_async` function
+/// Extension trait to provide the `filter_map_reduce_async_unordered` function
 /// for iterators.
-pub trait FilterMapReduceAsync: Iterator {
+pub trait FilterMapReduceAsyncUnordered: Iterator {
     /// Combine multithreaded mapping, filtering, and reduction all into a single tidy function call.
     ///
     /// Makes use of the standard [`Threadpool`] to discard the additional overhead introduced by
@@ -61,6 +63,9 @@ pub trait FilterMapReduceAsync: Iterator {
     /// pairs are evaluated does not affect the result), and commutative
     /// (the ordering of the two arguments with regards to each other does not
     /// affect the result), or else the result will be nondeterministic.
+    ///
+    /// If you require the reduction to be noncommutative, then refer to
+    /// [`FilterMapReduceAsync::filter_map_reduce_async`].
     ///
     /// ```
     /// use threadpools::*;
@@ -77,7 +82,7 @@ pub trait FilterMapReduceAsync: Iterator {
     ///     .unwrap();
     ///
     /// let parallel_result = vals
-    ///     .filter_map_reduce_async(
+    ///     .filter_map_reduce_async_unordered(
     ///         |x: usize| {
     ///             let x = x.pow(3) % 100;
     ///             (x > 50).then_some(x)
@@ -88,7 +93,7 @@ pub trait FilterMapReduceAsync: Iterator {
     ///
     /// assert_eq!(sequential_result, parallel_result);
     /// ```
-    fn filter_map_reduce_async<F, R, O>(self, f: F, r: R) -> Option<O>
+    fn filter_map_reduce_async_unordered<F, R, O>(self, f: F, r: R) -> Option<O>
     where
         Self::Item: Send + Sync,
         O: Send + Sync,
@@ -96,11 +101,11 @@ pub trait FilterMapReduceAsync: Iterator {
         R: Fn(O, O) -> O + Send + Sync;
 }
 
-impl<T> FilterMapReduceAsync for T
+impl<T> FilterMapReduceAsyncUnordered for T
 where
     T: Iterator + Send + Sync,
 {
-    fn filter_map_reduce_async<F, R, O>(self, f: F, r: R) -> Option<O>
+    fn filter_map_reduce_async_unordered<F, R, O>(self, f: F, r: R) -> Option<O>
     where
         Self::Item: Send + Sync,
         O: Send + Sync,
@@ -114,18 +119,27 @@ where
     }
 }
 
-/// Extension trait to provide the `filter_map_reduce_async_ordered` function
+/// Extension trait to provide the `filter_map_reduce_async` function
 /// for iterators.
-pub trait FilterMapReduceAsyncOrdered: Iterator {
+pub trait FilterMapReduceAsync: Iterator {
     /// Combine multithreaded mapping, filtering, and reduction all into a single tidy function call.
     ///
-    /// Makes use of the ordered [`OrderedThreadpool`] and the commutative reducer
+    /// Makes use of the ordered [`OrderedThreadpool`] and the noncommutative reducer
     /// [`ReduceAsync::reduce_async`] to reduce elements respecting their original ordering.
     ///
     /// The reducing function must be associative (ie. the order in which
     /// pairs are evaluated does not affect the result), but does not need
     /// to be commutative. If the reducing function is not associative, the
     /// result will be nondeterministic.
+    ///
+    /// If noncommutativity is not needed for your reducer, then consider using
+    /// [`FilterMapReduceAsyncUnordered::filter_map_reduce_async_unordered`] instead,
+    /// which is more efficient.
+    ///
+    /// If you require the reducer to be noncommutative and nonassociative, then simply
+    /// chain [`FilterMapMultithreadAsync::filter_map_multithread_async`] with
+    /// the standard [`Iterator::reduce`], as a noncommutative and nonassociative reducing
+    /// function cannot be parallelized.
     ///
     /// ```
     /// use threadpools::*;
@@ -144,7 +158,7 @@ pub trait FilterMapReduceAsyncOrdered: Iterator {
     ///     .unwrap();
     ///
     /// let parallel_result = chars
-    ///     .filter_map_reduce_async_ordered(
+    ///     .filter_map_reduce_async(
     ///         |c: char| {
     ///             (!['a', 'e', 'i', 'o', 'u'].contains(&c)).then(|| c.to_string())
     ///         },
@@ -154,7 +168,7 @@ pub trait FilterMapReduceAsyncOrdered: Iterator {
     ///
     /// assert_eq!(sequential_result, parallel_result);
     /// ```
-    fn filter_map_reduce_async_ordered<F, R, O>(self, f: F, r: R) -> Option<O>
+    fn filter_map_reduce_async<F, R, O>(self, f: F, r: R) -> Option<O>
     where
         Self::Item: Send + Sync,
         O: Send + Sync,
@@ -162,11 +176,11 @@ pub trait FilterMapReduceAsyncOrdered: Iterator {
         R: Fn(O, O) -> O + Send + Sync;
 }
 
-impl<T> FilterMapReduceAsyncOrdered for T
+impl<T> FilterMapReduceAsync for T
 where
     T: Iterator + Send + Sync,
 {
-    fn filter_map_reduce_async_ordered<F, R, O>(self, f: F, r: R) -> Option<O>
+    fn filter_map_reduce_async<F, R, O>(self, f: F, r: R) -> Option<O>
     where
         Self::Item: Send + Sync,
         O: Send + Sync,

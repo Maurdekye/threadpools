@@ -1,6 +1,7 @@
-//! Multithreaded reducer.
+//! Multithreaded reducers.
 //!
-//! See [`ReduceAsync::reduce_async`] for more detailed documentation.
+//! See [`ReduceAsync::reduce_async`] & [`ReduceAsyncCommutative::reduce_async_commutative`] 
+//! for more detailed documentation.
 
 use core::range::RangeInclusive;
 use std::{
@@ -219,6 +220,10 @@ pub trait ReduceAsync: Iterator {
     ///
     /// For a faster reducer (but requires the reducing function to be commutative)
     /// see [`ReduceAsyncCommutative::reduce_async_commutative`]
+    /// 
+    /// If you require your reducing function to be both noncommutative and 
+    /// nonassociative, then it is not possible to parallelize the reduction, and
+    /// you must use the sequential [`Iterator::reduce`] to reduce your data.
     ///
     /// Pairs nicely when chained with the result of one
     /// or more [`OrderedThreadpool`]s.
