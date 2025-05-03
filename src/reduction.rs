@@ -101,7 +101,7 @@ pub trait ReduceAsyncCommutative: Iterator {
     ///         .unwrap();
     ///    
     ///     let parallel_result = vals
-    ///         .filter_map_multithread_async(
+    ///         .filter_map_async(
     ///             |x: usize| {
     ///                 let x = x.pow(3) % 100;
     ///                 (x > 50).then_some(x)

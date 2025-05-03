@@ -2,9 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, scope};
 use std::time::Duration;
 use threadpools::{
-    FilterMapMultithread, FilterMapMultithreadAsync, FilterMapReduceAsyncUnordered,
-    FilterMapReduceAsync, OrderedThreadpool, ReduceAsync, ReduceAsyncCommutative,
-    Threadpool,
+    FilterMapAsync, FilterMapMultithread, FilterMapReduceAsync, FilterMapReduceAsyncCommutative,
+    GenericThreadpool, OrderedThreadpool, Pipe, ReduceAsync, ReduceAsyncCommutative, Threadpool,
 };
 
 fn is_prime(n: usize) -> bool {
@@ -77,7 +76,7 @@ fn async_trait_processing() {
         let items = 0..100usize;
         let pool_result: Vec<_> = items
             .clone()
-            .filter_map_multithread_async(|x| Some(x.pow(3)), scope)
+            .filter_map_async(|x| Some(x.pow(3)), scope)
             .collect();
         let sync_result: Vec<_> = items.map(|x| x.pow(3)).collect();
         assert_eq!(pool_result, sync_result);
@@ -115,7 +114,7 @@ fn map_filter_reduce() {
             .unwrap();
 
         let parallel_result = vals
-            .filter_map_multithread_async(
+            .filter_map_async(
                 |x: usize| {
                     let x = x.pow(3) % 100;
                     (x > 50).then_some(x)
@@ -174,7 +173,7 @@ fn map_filter_reduce_trait() {
         .unwrap();
 
     let parallel_result = vals
-        .filter_map_reduce_async_unordered(
+        .filter_map_reduce_async_commutative(
             |x: usize| {
                 let x = x.pow(3) % 100;
                 (x > 50).then_some(x)
@@ -216,4 +215,27 @@ fn test_filter_map_reduce_ordered() {
         .unwrap();
 
     assert_eq!(sequential_result, parallel_result);
+}
+
+#[test]
+fn chaining() {
+    scope(|scope| {
+        let sequential_result = (0..10000usize)
+            .filter_map(|x: usize| {
+                let x = x.pow(3) % 100;
+                (x > 50).then_some(x)
+            })
+            .reduce(|a, b| a + b)
+            .unwrap();
+
+        let parallel_result = (0..10000usize)
+            .pipe(Threadpool::new(|x: usize| Some(x.pow(3)), scope))
+            .pipe(Threadpool::new(|x: usize| Some(x % 100), scope))
+            .pipe(Threadpool::new(|x: usize| (x > 50).then_some(x), scope))
+            .into_iter()
+            .reduce_async_commutative(|a, b| a + b)
+            .unwrap();
+
+        assert_eq!(sequential_result, parallel_result);
+    });
 }

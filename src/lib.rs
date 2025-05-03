@@ -50,9 +50,9 @@ impl<S> Gate<S> {
     }
 }
 
-/// Extension trait to provide the `filter_map_reduce_async_unordered` function
+/// Extension trait to provide the `filter_map_reduce_async_commutative` function
 /// for iterators.
-pub trait FilterMapReduceAsyncUnordered: Iterator {
+pub trait FilterMapReduceAsyncCommutative: Iterator {
     /// Combine multithreaded mapping, filtering, and reduction all into a single tidy function call.
     ///
     /// Makes use of the standard [`Threadpool`] to discard the additional overhead introduced by
@@ -82,7 +82,7 @@ pub trait FilterMapReduceAsyncUnordered: Iterator {
     ///     .unwrap();
     ///
     /// let parallel_result = vals
-    ///     .filter_map_reduce_async_unordered(
+    ///     .filter_map_reduce_async_commutative(
     ///         |x: usize| {
     ///             let x = x.pow(3) % 100;
     ///             (x > 50).then_some(x)
@@ -93,7 +93,7 @@ pub trait FilterMapReduceAsyncUnordered: Iterator {
     ///
     /// assert_eq!(sequential_result, parallel_result);
     /// ```
-    fn filter_map_reduce_async_unordered<F, R, O>(self, f: F, r: R) -> Option<O>
+    fn filter_map_reduce_async_commutative<F, R, O>(self, f: F, r: R) -> Option<O>
     where
         Self::Item: Send + Sync,
         O: Send + Sync,
@@ -101,11 +101,11 @@ pub trait FilterMapReduceAsyncUnordered: Iterator {
         R: Fn(O, O) -> O + Send + Sync;
 }
 
-impl<T> FilterMapReduceAsyncUnordered for T
+impl<T> FilterMapReduceAsyncCommutative for T
 where
     T: Iterator + Send + Sync,
 {
-    fn filter_map_reduce_async_unordered<F, R, O>(self, f: F, r: R) -> Option<O>
+    fn filter_map_reduce_async_commutative<F, R, O>(self, f: F, r: R) -> Option<O>
     where
         Self::Item: Send + Sync,
         O: Send + Sync,
@@ -113,7 +113,7 @@ where
         R: Fn(O, O) -> O + Send + Sync,
     {
         scope(|scope| {
-            self.filter_map_multithread_async_unordered(f, scope)
+            self.filter_map_async_unordered(f, scope)
                 .reduce_async_commutative(r)
         })
     }
@@ -133,11 +133,11 @@ pub trait FilterMapReduceAsync: Iterator {
     /// result will be nondeterministic.
     ///
     /// If noncommutativity is not needed for your reducer, then consider using
-    /// [`FilterMapReduceAsyncUnordered::filter_map_reduce_async_unordered`] instead,
+    /// [`FilterMapReduceAsyncCommutative::filter_map_reduce_async_commutative`] instead,
     /// which is more efficient.
     ///
     /// If you require the reducer to be noncommutative and nonassociative, then simply
-    /// chain [`FilterMapMultithreadAsync::filter_map_multithread_async`] with
+    /// chain [`FilterMapAsync::filter_map_async`] with
     /// the standard [`Iterator::reduce`], as a noncommutative and nonassociative reducing
     /// function cannot be parallelized.
     ///
@@ -187,6 +187,113 @@ where
         F: Fn(Self::Item) -> Option<O> + Send + Sync,
         R: Fn(O, O) -> O + Send + Sync,
     {
-        scope(|scope| self.filter_map_multithread_async(f, scope).reduce_async(r))
+        scope(|scope| self.filter_map_async(f, scope).reduce_async(r))
+    }
+}
+
+/// Generic trait representing a thread pool.
+///
+/// See [`Threadpool`] and [`OrderedThreadpool`] for specific implementations.
+pub trait GenericThreadpool<'scope, I, O>: IntoIterator<Item = O> + Sized + Send + Sync {
+    type Iter<'a>: Iterator<Item = O> + 'a
+    where
+        Self: 'a;
+    type JoinHandle;
+
+    /// Synchronously submit a single job to the pool.
+    fn submit(&self, input: I);
+
+    /// Synchronously submit many jobs to the pool at once from
+    /// an iterator or collection.
+    fn submit_all<T>(&self, iter: T)
+    where
+        T: IntoIterator<Item = I>,
+    {
+        iter.into_iter().for_each(|x| self.submit(x));
+    }
+
+    /// Block the current thread until a result from the
+    /// pool is available, and return it.
+    fn recv(&self) -> O;
+
+    /// Check if a result is available from the pool;
+    /// if so, return it. If not, returns `None`.
+    fn try_recv(&self) -> Option<O>;
+
+    /// Iterate over the currently available results in the pool.
+    ///
+    /// Does not consume the pool; it only yields results until
+    /// there are no jobs left to process. If more jobs are submitted
+    /// to the pool afterwards, those results may be subsequently iterated
+    /// over as well.
+    ///
+    /// It's recommended that you call [`GenericThreadpool::wait_until_finished`]
+    /// before iterating, otherwise the cpu may be stuck in a busy wait while
+    /// lingering jobs are still being processed.
+    fn iter(&self) -> Self::Iter<'_>;
+
+    /// Block until all producers have been exhausted, and all workers
+    /// have finished processing all jobs.
+    fn wait_until_finished(&self);
+
+    /// Spawn a new producer thread, which supplies jobs
+    /// to the pool from the passed iterator asynchronously
+    /// on a separate thread.
+    fn producer<T>(&self, iter: T) -> Self::JoinHandle
+    where
+        T: IntoIterator<Item = I> + Send + Sync + 'scope;
+
+    /// Spawn a new consumer thread, which consumes and processes
+    /// results from the workers asynchronously on a separate thread.
+    fn consumer<F>(&self, f: F) -> Self::JoinHandle
+    where
+        F: Fn(O) + Sync + Send + 'scope;
+}
+
+/// Extension trait to provide the `pipe` method
+/// for iterators.
+pub trait Pipe<P, O> {
+    /// Pipe the result of an iterator into a thread pool.
+    ///
+    /// Can be used multiple times to chain several thread pools together in a row.
+    ///
+    /// When chained together in this manner, all pools work simultaneously to process 
+    /// elements at once.
+    /// 
+    /// ```
+    /// use threadpools::*;
+    /// use std::thread::scope;
+    ///
+    /// scope(|scope| {
+    ///     let sequential_result = (0..10000usize)
+    ///         .filter_map(|x: usize| {
+    ///             let x = x.pow(3) % 100;
+    ///             (x > 50).then_some(x)
+    ///         })
+    ///         .reduce(|a, b| a + b)
+    ///         .unwrap();
+    ///
+    ///     let parallel_result = (0..10000usize)
+    ///         .pipe(Threadpool::new(|x: usize| Some(x.pow(3)), scope))
+    ///         .pipe(Threadpool::new(|x: usize| Some(x % 100), scope))
+    ///         .pipe(Threadpool::new(|x: usize| (x > 50).then_some(x), scope))
+    ///         .into_iter()
+    ///         .reduce_async_commutative(|a, b| a + b)
+    ///         .unwrap();
+    ///
+    ///     assert_eq!(sequential_result, parallel_result);
+    /// });
+    /// ```
+    fn pipe(self, target: P) -> P;
+}
+
+impl<'scope, P, T, I, O> Pipe<P, O> for T
+where
+    T: IntoIterator<Item = I> + Sized + Send + Sync + 'scope,
+    P: GenericThreadpool<'scope, I, O>,
+{
+    fn pipe(self, target: P) -> P {
+        target.producer(self);
+        target
     }
 }

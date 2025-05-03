@@ -16,12 +16,13 @@ Additionally, this library provides a little helper utility [`ReduceAsync::reduc
 These are all the current iteration extensions implemented in this library:
 
  * [`FilterMapMultithread::filter_map_multithread`]
- * [`FilterMapMultithreadAsync::filter_map_multithread_async`]
- * [`FilterMapMultithreadAsyncUnordered::filter_map_multithread_async_unordered`]
+ * [`FilterMapAsync::filter_map_async`]
+ * [`FilterMapAsyncUnordered::filter_map_async_unordered`]
  * [`ReduceAsync::reduce_async`]
  * [`ReduceAsyncCommutative::reduce_async_commutative`]
  * [`FilterMapReduceAsync::filter_map_reduce_async`]
- * [`FilterMapReduceAsyncUnordered::filter_map_reduce_async_unordered`]
+ * [`FilterMapReduceAsyncCommutative::filter_map_reduce_async_commutative`]
+ * [`Pipe::pipe`]
 
 TL;DR: Spawn a thread pool, use it to asynchronously process data, then discard it once you finish. Or don't, I'm not your dad.
 
@@ -31,7 +32,7 @@ TL;DR: Spawn a thread pool, use it to asynchronously process data, then discard 
 
 ```rust
 use std::thread::{self, scope};
-use threadpools::Threadpool;
+use threadpools::*;
 
 fn is_prime(n: usize) -> bool {
     if n < 2 {
@@ -59,7 +60,7 @@ scope(|scope| {
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, scope};
 use std::time::Duration;
-use threadpools::Threadpool;
+use threadpools::*;
 
 fn is_prime(n: usize) -> bool {
     if n < 2 {
@@ -108,7 +109,7 @@ let sequential_result = vals
     .unwrap();
 
 let parallel_result = vals
-    .filter_map_reduce_async_unordered(
+    .filter_map_reduce_async_commutative(
         |x: usize| {
             let x = x.pow(3) % 100;
             (x > 50).then_some(x)
@@ -118,6 +119,33 @@ let parallel_result = vals
     .unwrap();
 
 assert_eq!(sequential_result, parallel_result);
+```
+
+### Chain mutliple pools together:
+
+```rust
+use threadpools::*;
+use std::thread::scope;
+
+scope(|scope| {
+    let sequential_result = (0..10000usize)
+        .filter_map(|x: usize| {
+            let x = x.pow(3) % 100;
+            (x > 50).then_some(x)
+        })
+        .reduce(|a, b| a + b)
+        .unwrap();
+
+    let parallel_result = (0..10000usize)
+        .pipe(Threadpool::new(|x: usize| Some(x.pow(3)), scope))
+        .pipe(Threadpool::new(|x: usize| Some(x % 100), scope))
+        .pipe(Threadpool::new(|x: usize| (x > 50).then_some(x), scope))
+        .into_iter()
+        .reduce_async_commutative(|a, b| a + b)
+        .unwrap();
+
+    assert_eq!(sequential_result, parallel_result);
+});
 ```
 
 ---

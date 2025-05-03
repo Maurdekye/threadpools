@@ -13,7 +13,7 @@ use std::{
     thread::{self, Scope, ScopedJoinHandle, scope},
 };
 
-use crate::{Gate, num_cpus};
+use crate::{Gate, GenericThreadpool, num_cpus};
 
 // imports for documentation
 #[allow(unused_imports)]
@@ -22,7 +22,7 @@ use crate::unordered::Threadpool;
 use std::thread::available_parallelism;
 
 /// An ordered thread pool.
-/// 
+///
 /// Yields results in the same order they are submitted to the pool.
 ///
 /// Retains much of the same functionality as a normal [`Threadpool`]; refer to the documentation there
@@ -43,7 +43,7 @@ use std::thread::available_parallelism;
 /// and `filter` operations on iterators passed to it. As such, it has an additional method
 /// [`OrderedThreadpool::filter_map`]. This works as you would expect, similar to its [`Iterator`] counterpart,
 /// [`Iterator::filter_map`]. Some iterator extensions [`FilterMapMultithread::filter_map_multithread`] and
-/// [`FilterMapMultithreadAsync::filter_map_multithread_async`] are available to make this usage pattern even more seamless.
+/// [`FilterMapAsync::filter_map_async`] are available to make this usage pattern even more seamless.
 ///
 /// Of note, in exchange for yielding ordered outputs, results are no longer guaranteed to return immediately once they
 /// finish processing; there may be some delay, as results returned sooner than indented are placed inside a buffer, which also uses some
@@ -169,32 +169,65 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
         }
     }
 
-    /// Synchronously submit a single job to the [`OrderedThreadpool`].
-    pub fn submit(&self, input: I) {
+    /// Use this pool to perform a multithreaded `filter_map` on the
+    /// passed iterator.
+    ///
+    /// Equivalent to calling [`OrderedThreadpool::submit_all`], followed
+    /// by [`OrderedThreadpool::iter`].
+    pub fn filter_map<'a, T>(&'a self, iter: T) -> OrderedThreadpoolIter<'a, 'scope, 'env, I, O>
+    where
+        I: Send + Sync + 'scope,
+        O: Send + Sync + 'scope,
+        T: IntoIterator<Item = I>,
+    {
+        self.submit_all(iter);
+        self.iter()
+    }
+
+    /// Use this pool to perform a multithreaded `filter_map` on the
+    /// passed iterator.
+    ///
+    /// Passes the iterator up to a producer thread, so that results can be
+    /// consumed from the pool immediately, even before the iterator finishes being
+    /// exhausted.
+    pub fn filter_map_async<'a, T>(
+        &'a self,
+        iter: T,
+    ) -> OrderedThreadpoolIter<'a, 'scope, 'env, I, O>
+    where
+        I: Send + Sync + 'scope,
+        O: Send + Sync + 'scope,
+        T: IntoIterator<Item = I> + Send + Sync + 'scope,
+    {
+        self.producer(iter);
+        self.iter()
+    }
+}
+
+impl<'scope, 'env, I, O> GenericThreadpool<'scope, I, O> for OrderedThreadpool<'scope, 'env, I, O>
+where
+    I: Send + Sync + 'scope,
+    O: Send + Sync + 'scope,
+{
+    type Iter<'a>
+        = OrderedThreadpoolIter<'a, 'scope, 'env, I, O>
+    where
+        Self: 'a;
+
+    type JoinHandle = ScopedJoinHandle<'scope, ()>;
+
+    fn submit(&self, input: I) {
         let mut job_index = self.job_index.lock().unwrap();
         self.in_flight.update(|x| *x += 1);
         self.work_submission.send((*job_index, input)).unwrap();
         *job_index += 1;
     }
 
-    /// Synchronously submit many jobs to the [`OrderedThreadpool`] at once from
-    /// an iterator or collection.
-    pub fn submit_all<T>(&self, iter: T)
-    where
-        T: IntoIterator<Item = I>,
-    {
-        iter.into_iter().for_each(|x| self.submit(x));
-    }
-
-    /// Block the current thread until a result from the
-    /// [`OrderedThreadpool`] is available, and return it.
-    pub fn recv(&self) -> O {
+    fn recv(&self) -> O {
         self.work_reception.recv().unwrap()
     }
 
-    /// Check if a result is available from the [`OrderedThreadpool`];
-    /// if so, return it. If not, returns `None`.
-    pub fn try_recv(&self) -> Option<O> {
+    fn try_recv(&self) -> Option<O> {
         match self.work_reception.try_recv() {
             Ok(val) => Some(val),
             Err(TryRecvError::Empty) => None,
@@ -202,29 +235,17 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
         }
     }
 
-    /// Iterate over the currently available results in the [`OrderedThreadpool`].
-    ///
-    /// Does not consume the pool; it only yields results until
-    /// there are no jobs left to process. If more jobs are submitted
-    /// to the pool afterwards, those results may be subsequently iterated
-    /// over as well.
-    ///
-    /// It's recommended that you call [`OrderedThreadpool::wait_until_finished`]
-    /// before iterating, otherwise the cpu may be stuck in a busy wait while
-    /// lingering jobs are still being processed.
-    pub fn iter(&self) -> OrderedThreadpoolIter<'_, 'scope, 'env, I, O> {
+    fn iter(&self) -> OrderedThreadpoolIter<'_, 'scope, 'env, I, O> {
         OrderedThreadpoolIter(self)
     }
 
-    /// Block until all producers have been exhausted, and all workers
-    /// have finished processing all jobs.
-    pub fn wait_until_finished(&self) {
+    fn wait_until_finished(&self) {
         self.producers_active.wait_while(|x| *x > 0);
         self.in_flight.wait_while(|x| *x > 0);
     }
 
     /// Spawn a new producer thread, which supplies jobs
-    /// to the [`OrderedThreadpool`] from the passed iterator asynchronously
+    /// to the pool from the passed iterator asynchronously
     /// on a separate thread.
     ///
     /// Because of the ordered nature of this pool, you probably don't want to
@@ -233,7 +254,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
     /// circumstances, the pool guarantees that the original ordering of the individual iterators
     /// will still be preserved, even if the specific interspersing of their
     /// indivdual elements is undefined and nondeterministic.
-    pub fn producer<T>(&self, iter: T) -> ScopedJoinHandle<'scope, ()>
+    fn producer<T>(&self, iter: T) -> ScopedJoinHandle<'scope, ()>
     where
         I: Send + Sync + 'scope,
         T: IntoIterator<Item = I> + Send + Sync + 'scope,
@@ -254,10 +275,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
         })
     }
 
-    /// Spawn a new consumer thread, which consumes and processes
-    /// results from the [`OrderedThreadpool`] asynchronously on a
-    /// separate thread.
-    pub fn consumer<F>(&self, f: F) -> ScopedJoinHandle<'scope, ()>
+    fn consumer<F>(&self, f: F) -> ScopedJoinHandle<'scope, ()>
     where
         O: Send + Sync + 'scope,
         F: Fn(O) + Sync + Send + 'scope,
@@ -268,37 +286,6 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
                 f(item);
             }
         })
-    }
-
-    /// Use this pool to perform a multithreaded `filter_map` on the
-    /// passed iterator.
-    ///
-    /// Equivalent to calling [`OrderedThreadpool::submit_all`], followed
-    /// by [`OrderedThreadpool::iter`].
-    pub fn filter_map<'a, T>(&'a self, iter: T) -> OrderedThreadpoolIter<'a, 'scope, 'env, I, O>
-    where
-        T: IntoIterator<Item = I>,
-    {
-        self.submit_all(iter);
-        self.iter()
-    }
-
-    /// Use this pool to perform a multithreaded `filter_map` on the
-    /// passed iterator.
-    ///
-    /// Passes the iterator up to a producer thread, so that results can be
-    /// consumed from the pool immediately, even before the iterator finishes being
-    /// exhausted.
-    pub fn filter_map_async<'a, T>(
-        &'a self,
-        iter: T,
-    ) -> OrderedThreadpoolIter<'a, 'scope, 'env, I, O>
-    where
-        I: Send + Sync + 'scope,
-        T: IntoIterator<Item = I> + Send + Sync + 'scope,
-    {
-        self.producer(iter);
-        self.iter()
     }
 }
 
@@ -333,7 +320,11 @@ impl<'a, 'scope, 'env, I, O> Iterator for OrderedThreadpoolIter<'a, 'scope, 'env
     }
 }
 
-impl<'scope, 'env, I, O> Extend<I> for OrderedThreadpool<'scope, 'env, I, O> {
+impl<'scope, 'env, I, O> Extend<I> for OrderedThreadpool<'scope, 'env, I, O>
+where
+    I: Send + Sync + 'scope,
+    O: Send + Sync + 'scope,
+{
     fn extend<T: IntoIterator<Item = I>>(&mut self, iter: T) {
         self.submit_all(iter);
     }
@@ -350,9 +341,9 @@ impl<'scope, 'env, I, O> IntoIterator for OrderedThreadpool<'scope, 'env, I, O> 
     }
 }
 
-/// Extension trait to provide the `filter_map_multithread_async` function
+/// Extension trait to provide the `filter_map_async` function
 /// for iterators.
-pub trait FilterMapMultithreadAsync<'scope> {
+pub trait FilterMapAsync<'scope> {
     /// Constructs a new
     /// [`OrderedThreadpool`] and uses it to map the iterator
     /// with the passed function in parallel.
@@ -366,7 +357,7 @@ pub trait FilterMapMultithreadAsync<'scope> {
     ///
     /// For a version of this function that does not require a
     /// scope, see [`FilterMapMultithread::filter_map_multithread`]
-    fn filter_map_multithread_async<'env, F, O>(
+    fn filter_map_async<'env, F, O>(
         self,
         f: F,
         scope: &'scope Scope<'scope, 'env>,
@@ -378,11 +369,11 @@ pub trait FilterMapMultithreadAsync<'scope> {
         F: Fn(Self::Item) -> Option<O> + Send + Sync + 'scope;
 }
 
-impl<'scope, T> FilterMapMultithreadAsync<'scope> for T
+impl<'scope, T> FilterMapAsync<'scope> for T
 where
     T: Iterator + Send + Sync + 'scope,
 {
-    fn filter_map_multithread_async<'env, F, O>(
+    fn filter_map_async<'env, F, O>(
         self,
         f: F,
         scope: &'scope Scope<'scope, 'env>,
@@ -408,7 +399,7 @@ pub trait FilterMapMultithread {
     ///
     /// Parses and collects the full result into a [`Vec`] before returning.
     ///
-    /// Unlike [`FilterMapMultithreadAsync::filter_map_multithread_async`],
+    /// Unlike [`FilterMapAsync::filter_map_async`],
     /// calling this function does not require a [`Scope`] to be provided,
     /// as all threads are cleaned up by the time work is done.
     fn filter_map_multithread<F, O>(self, f: F) -> Vec<O>
