@@ -4,7 +4,10 @@
 
 use std::{
     num::NonZeroUsize,
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc, Condvar, Mutex,
+        mpmc::{self, Receiver, Sender},
+    },
     thread::{available_parallelism, scope},
 };
 
@@ -18,6 +21,14 @@ pub mod unordered;
 
 fn num_cpus() -> NonZeroUsize {
     available_parallelism().unwrap_or(NonZeroUsize::MIN)
+}
+
+fn channel<T>(blocking: bool) -> (Sender<T>, Receiver<T>) {
+    if blocking {
+        mpmc::sync_channel(0)
+    } else {
+        mpmc::channel()
+    }
 }
 
 #[derive(Clone)]
