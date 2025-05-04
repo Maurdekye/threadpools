@@ -194,7 +194,9 @@ where
 /// Generic trait representing a thread pool.
 ///
 /// See [`Threadpool`] and [`OrderedThreadpool`] for specific implementations.
-pub trait GenericThreadpool<'scope, I, O>: IntoIterator<Item = O> + Sized + Send + Sync {
+pub trait GenericThreadpool<'scope, I, O>:
+    IntoIterator<Item = O> + Extend<I> + Sized + Send + Sync
+{
     type Iter<'a>: Iterator<Item = O> + 'a
     where
         Self: 'a;
@@ -257,9 +259,9 @@ pub trait Pipe<P, O> {
     ///
     /// Can be used multiple times to chain several thread pools together in a row.
     ///
-    /// When chained together in this manner, all pools work simultaneously to process 
+    /// When chained together in this manner, all pools work simultaneously to process
     /// elements at once.
-    /// 
+    ///
     /// ```
     /// use threadpools::*;
     /// use std::thread::scope;

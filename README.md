@@ -121,7 +121,7 @@ let parallel_result = vals
 assert_eq!(sequential_result, parallel_result);
 ```
 
-### Chain mutliple pools together:
+### Chain multiple pools together:
 
 ```rust
 use threadpools::*;
