@@ -73,8 +73,9 @@ impl<'scope, 'env, I, O> Threadpool<'scope, 'env, I, O> {
     ///
     /// By default, the number of workers spawned is determined by the
     /// result of [`available_parallelism`].
-    /// To specify the specific number of workers to spawn, use
-    /// [`Threadpool::new_custom`] instead.
+    /// To specify the specific number of workers to spawn and configure
+    /// several additional other custom properties, including an initializer
+    /// and blocking properties, use [`Threadpool::new_custom`] instead.
     pub fn new<F>(f: F, scope: &'scope Scope<'scope, 'env>) -> Self
     where
         F: Fn(I) -> Option<O> + Send + Sync + 'scope,
