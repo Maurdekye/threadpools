@@ -4,5 +4,6 @@ version = "6.0.1"
 edition = "2024"
 license = "MIT"
 description = "Efficient, configurable, zero-dependency thread pool implementations. Flexible and usable for a wide variety of applications."
+repository = "https://github.com/Maurdekye/threadpools"
 
 [dependencies]
