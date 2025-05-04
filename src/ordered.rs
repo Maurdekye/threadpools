@@ -46,7 +46,7 @@ use std::thread::available_parallelism;
 /// [`FilterMapAsync::filter_map_async`] are available to make this usage pattern even more seamless.
 ///
 /// Of note, in exchange for yielding ordered outputs, results are no longer guaranteed to return immediately once they
-/// finish processing; there may be some delay, as results returned sooner than indented are placed inside a buffer, which also uses some
+/// finish processing; there may be some delay, as results returned sooner than intended are placed inside a buffer, which also uses some
 /// additional amount of memory.
 pub struct OrderedThreadpool<'scope, 'env, I, O> {
     scope: &'scope Scope<'scope, 'env>,
@@ -184,7 +184,7 @@ impl<'scope, 'env, I, O> OrderedThreadpool<'scope, 'env, I, O> {
                     }
                     in_flight.update(|x| *x = x.saturating_sub(1));
                     // probably not necessary, but just to be *extra* safe and not leave
-                    // the pool in an invalid state in some unforseeable edge case,
+                    // the pool in an invalid state in some unforeseeable edge case,
                     // we increment this
                     least_index += 1;
                 }
@@ -283,10 +283,10 @@ where
     ///
     /// Because of the ordered nature of this pool, you probably don't want to
     /// be submitting multiple jobs to the pool simultaneously from separate threads, as the results
-    /// will become intermixed nondeterminstically with each other. Nonetheless, even in such
+    /// will become intermixed nondeterministically with each other. Nonetheless, even in such
     /// circumstances, the pool guarantees that the original ordering of the individual iterators
     /// will still be preserved, even if the specific interspersing of their
-    /// indivdual elements is undefined and nondeterministic.
+    /// individual elements is undefined and nondeterministic.
     fn producer<T>(&self, iter: T) -> ScopedJoinHandle<'scope, ()>
     where
         I: Send + Sync + 'scope,

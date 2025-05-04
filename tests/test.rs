@@ -239,3 +239,203 @@ fn chaining() {
         assert_eq!(sequential_result, parallel_result);
     });
 }
+
+// gemini 2.5 tests
+
+#[test]
+fn test_multiple_producers_ordered() {
+    scope(|scope| {
+        let pool = OrderedThreadpool::new(|x: usize| Some(x * 2), scope);
+
+        pool.submit_all(0..50);
+        pool.submit_all(50..100);
+
+        let results: Vec<_> = pool.into_iter().collect();
+        let expected: Vec<_> = (0..100).map(|x| x * 2).collect();
+
+        assert_eq!(results.len(), 100);
+        assert_eq!(
+            results, expected,
+            "Results should maintain original combined order"
+        );
+    });
+}
+
+#[test]
+fn test_empty_input_pool_unordered() {
+    scope(|scope| {
+        let pool = Threadpool::new(|x: usize| Some(x), scope);
+        pool.submit_all(0..0); // Empty iterator
+        let results: Vec<_> = pool.into_iter().collect();
+        assert!(results.is_empty());
+    });
+}
+
+#[test]
+fn test_empty_input_pool_ordered() {
+    scope(|scope| {
+        let pool = OrderedThreadpool::new(|x: usize| Some(x), scope);
+        pool.submit_all(0..0); // Empty iterator
+        let results: Vec<_> = pool.into_iter().collect();
+        assert!(results.is_empty());
+    });
+}
+
+#[test]
+fn test_single_element_input_pool_unordered() {
+    scope(|scope| {
+        let pool = Threadpool::new(|x: usize| Some(x * 10), scope);
+        pool.submit_all(5..6); // Single element iterator
+        let results: Vec<_> = pool.into_iter().collect();
+        assert_eq!(results, vec![50]);
+    });
+}
+
+#[test]
+fn test_single_element_input_pool_ordered() {
+    scope(|scope| {
+        let pool = OrderedThreadpool::new(|x: usize| Some(x * 10), scope);
+        pool.submit_all(5..6); // Single element iterator
+        let results: Vec<_> = pool.into_iter().collect();
+        assert_eq!(results, vec![50]);
+    });
+}
+
+#[test]
+fn test_empty_input_reducers() {
+    let iter = std::iter::empty::<i32>();
+    let res_comm = iter.clone().reduce_async_commutative(|a, b| a + b);
+    let res_noncomm = iter.reduce_async(|a, b| a + b);
+    assert_eq!(res_comm, None);
+    assert_eq!(res_noncomm, None);
+}
+
+#[test]
+fn test_single_element_reducers() {
+    let iter = std::iter::once(10);
+    let res_comm = iter.clone().reduce_async_commutative(|a, b| a + b);
+    let res_noncomm = iter.reduce_async(|a, b| a + b);
+    assert_eq!(res_comm, Some(10));
+    assert_eq!(res_noncomm, Some(10));
+}
+
+#[test]
+#[should_panic]
+fn test_worker_panic_unordered() {
+    scope(|scope| {
+        let pool = Threadpool::new(
+            |x: usize| {
+                if x == 5 {
+                    panic!("Worker panicked intentionally!");
+                }
+                Some(x)
+            },
+            scope,
+        );
+        // Submit including the panic trigger
+        pool.submit_all(0..10);
+        // Collect results - the panic should propagate here or during iteration
+        let _results: Vec<_> = pool.into_iter().collect();
+        // If collect finishes without panic, the test fails.
+    });
+}
+
+#[test]
+#[should_panic]
+fn test_worker_panic_ordered() {
+    scope(|scope| {
+        let pool = OrderedThreadpool::new(
+            |x: usize| {
+                if x == 5 {
+                    // Simulate work before panic
+                    thread::sleep(Duration::from_millis(10));
+                    panic!("Worker panicked intentionally!");
+                }
+                // Simulate work
+                thread::sleep(Duration::from_millis(5));
+                Some(x)
+            },
+            scope,
+        );
+        // Submit including the panic trigger
+        pool.submit_all(0..10);
+        // Collect results - the panic should propagate here or during iteration
+        let _results: Vec<_> = pool.into_iter().collect();
+        // If collect finishes without panic, the test fails.
+    });
+}
+
+#[test]
+fn test_pipe_ordered() {
+    scope(|scope| {
+        let sequential_result: Vec<_> = (0..100usize)
+            .map(|x| x + 1) // First operation
+            .map(|x| x * 2) // Second operation
+            .collect();
+
+        let parallel_result = (0..100usize)
+            .pipe(OrderedThreadpool::new(|x: usize| Some(x + 1), scope)) // Ordered
+            .pipe(OrderedThreadpool::new(|x: usize| Some(x * 2), scope)) // Ordered
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            sequential_result, parallel_result,
+            "Piped ordered pools should maintain order"
+        );
+    });
+}
+
+#[test]
+fn test_try_recv_behavior() {
+    scope(|scope| {
+        let pool = Threadpool::new(
+            |x: usize| {
+                thread::sleep(Duration::from_millis(100)); // Simulate work
+                Some(x * 2)
+            },
+            scope,
+        );
+
+        // Try receiving before submitting anything
+        assert_eq!(pool.try_recv(), None, "Should be None before submission");
+
+        pool.submit(10);
+
+        // Try receiving immediately after submission (job likely not finished)
+        // This might occasionally succeed if the scheduler is very fast,
+        // but usually it should be None. We add a small sleep to increase
+        // the chance it's still processing.
+        thread::sleep(Duration::from_millis(10));
+        let immediate_recv = pool.try_recv();
+        println!("Immediate try_recv result: {:?}", immediate_recv); // For debugging race conditions
+
+        // Wait until the job should be finished
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            pool.try_recv().or(immediate_recv),
+            Some(20),
+            "Should receive result after waiting"
+        ); // Use `or` to handle the race condition
+
+        // Try receiving again after result is taken
+        assert_eq!(
+            pool.try_recv(),
+            None,
+            "Should be None after result is taken"
+        );
+
+        // Submit another job
+        pool.submit(20);
+        // Use recv (blocking) this time
+        assert_eq!(pool.recv(), 40, "Blocking recv should work");
+
+        // Ensure pool is finished before scope ends
+        pool.wait_until_finished();
+        assert_eq!(
+            pool.try_recv(),
+            None,
+            "Should be None after waiting finished"
+        );
+    });
+}

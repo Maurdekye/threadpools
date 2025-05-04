@@ -49,7 +49,7 @@ use std::thread::available_parallelism;
 /// your own synchronization system to confirm whether or not work has been finished processing by all consumers.
 /// [`Threadpool::wait_until_finished`] only guarantees all producers and workers have finished processing.
 ///
-/// The [`Threadpool`] is designed to be resuable, to reduce the need to repeatedly create and destroy threads over
+/// The [`Threadpool`] is designed to be reusable, to reduce the need to repeatedly create and destroy threads over
 /// long-term usage. This is the primary reason there is no synchronization machinery to check if any registered
 /// consumers have finished processing; conceptually, there is no practical way to distinguish between a consumer
 /// that has truly exhausted all results from the worker pool, and a consumer that is simply waiting for the next

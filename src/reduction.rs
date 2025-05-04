@@ -67,7 +67,7 @@ where
     .reduce(f)
 }
 
-/// Extension trait to provide the `reduce_async_noncommutative` function
+/// Extension trait to provide the `reduce_async_commutative` function
 /// for iterators.
 pub trait ReduceAsyncCommutative: Iterator {
     /// Reduce an iterator in parallel, without respect to the ordering
@@ -242,7 +242,7 @@ pub trait ReduceAsync: Iterator {
     /// ```
     fn reduce_async<F>(self, f: F) -> Option<Self::Item>
     where
-        Self: Sized, // Required because reduce_async_commutative_inner consumes the iterator
+        Self: Sized,
         Self::Item: Send + Sync,
         F: Fn(Self::Item, Self::Item) -> Self::Item + Send + Sync;
 }
