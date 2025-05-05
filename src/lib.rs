@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 #![feature(mpmc_channel)]
 #![feature(new_range_api)]
+#![feature(type_changing_struct_update)]
 
 use std::{
     num::NonZeroUsize,

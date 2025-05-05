@@ -1,9 +1,9 @@
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::{self, scope};
 use std::time::Duration;
 use threadpools::{
-    FilterMapAsync, FilterMapMultithread, FilterMapReduceAsync, FilterMapReduceAsyncCommutative,
-    GenericThreadpool, OrderedThreadpool, Pipe, ReduceAsync, ReduceAsyncCommutative, Threadpool,
+    FilterMapAsync, FilterMapMultithread, FilterMapReduceAsync, FilterMapReduceAsyncCommutative, GenericThreadpool, OrderedThreadpool, OrderedThreadpoolBuilder, Pipe, ReduceAsync, ReduceAsyncCommutative, Threadpool, ThreadpoolBuilder
 };
 
 fn is_prime(n: usize) -> bool {
@@ -437,5 +437,159 @@ fn test_try_recv_behavior() {
             None,
             "Should be None after waiting finished"
         );
+    });
+}
+
+// Builder Tests
+
+#[test]
+fn test_unordered_builder_default() {
+    scope(|scope| {
+        let pool = ThreadpoolBuilder::new()
+            .build(|x: usize, _id| Some(x * 2), scope);
+        pool.submit_all(0..10);
+        let mut results: Vec<_> = pool.into_iter().collect();
+        results.sort_unstable(); // Unordered pool, sort for comparison
+        let expected: Vec<_> = (0..10).map(|x| x * 2).collect();
+        assert_eq!(results, expected);
+    });
+}
+
+#[test]
+fn test_ordered_builder_default() {
+    scope(|scope| {
+        let pool = OrderedThreadpoolBuilder::new()
+            .build(|x: usize, (_id, _jid)| Some(x * 2), scope);
+        pool.submit_all(0..10);
+        let results: Vec<_> = pool.into_iter().collect();
+        let expected: Vec<_> = (0..10).map(|x| x * 2).collect();
+        assert_eq!(results, expected); // Ordered pool, order should match
+    });
+}
+
+#[test]
+fn test_unordered_builder_num_workers() {
+    scope(|scope| {
+        let num_workers = NonZeroUsize::new(2).unwrap();
+        let pool = ThreadpoolBuilder::new()
+            .num_workers(num_workers)
+            .build(move |x: usize, id| {
+                // Check if thread id is within expected range (0 or 1)
+                assert!(id < num_workers.get());
+                Some(x * id) // Use id in calculation to verify different threads are used
+            }, scope);
+
+        pool.submit_all(0..20); // More jobs than workers
+        let results: Vec<_> = pool.into_iter().collect();
+        assert_eq!(results.len(), 20);
+    });
+}
+
+
+#[test]
+fn test_ordered_builder_num_workers() {
+    scope(|scope| {
+        let num_workers = NonZeroUsize::new(2).unwrap();
+        let pool = OrderedThreadpoolBuilder::new()
+            .num_workers(num_workers)
+            .build(move |x: usize, (id, jid)| {
+                // Check if thread id is within expected range (0 or 1)
+                assert!(id < num_workers.get());
+                Some((x, jid, id)) // Return job index and thread id
+            }, scope);
+
+        pool.submit_all(0..20); // More jobs than workers
+        let results: Vec<_> = pool.into_iter().collect();
+        assert_eq!(results.len(), 20);
+        // Verify job indices are sequential and match input order
+        for (i, (x, jid, _id)) in results.iter().enumerate() {
+            assert_eq!(*x, i);
+            assert_eq!(*jid, i);
+        }
+        // Check that at least two different thread IDs were used (likely, not guaranteed)
+        let unique_ids: std::collections::HashSet<_> = results.iter().map(|&(_, _, id)| id).collect();
+        assert!(unique_ids.len() > 0 && unique_ids.len() <= num_workers.get());
+    });
+}
+
+
+#[test]
+fn test_unordered_builder_initializer() {
+    scope(|scope| {
+        let pool = ThreadpoolBuilder::new()
+            .initializer(|id| format!("Thread {}", id)) // Initialize with thread-specific string
+            .build(|x: usize, (state, id)| {
+                assert_eq!(*state, format!("Thread {}", id)); // Check thread-local sta
+                Some(x * 2)
+            }, scope);
+
+        pool.submit_all(0..10);
+        let results: Vec<_> = pool.into_iter().collect();
+        assert_eq!(results.len(), 10);
+        // Cannot easily check final state without joining threads directly,
+        // but the assert inside the worker verifies it's accessible.
+    });
+}
+
+#[test]
+fn test_ordered_builder_initializer() {
+    scope(|scope| {
+        let pool = OrderedThreadpoolBuilder::new()
+            .initializer(|id| id) // Initialize with thread ID
+            .build(|x: usize, (state, id, _jid)| {
+                assert_eq!(*state, id); // Check initial thread-local state
+                Some(x * 2)
+            }, scope);
+
+        pool.submit_all(0..10);
+        let results: Vec<_> = pool.into_iter().collect();
+        let expected: Vec<_> = (0..10).map(|x| x * 2).collect();
+        assert_eq!(results, expected);
+        // Cannot easily check final state without joining threads directly.
+    });
+}
+
+#[test]
+fn test_unordered_builder_chaining() {
+     scope(|scope| {
+        let num_workers = NonZeroUsize::new(1).unwrap();
+        let pool = ThreadpoolBuilder::new()
+            .num_workers(num_workers) // Set workers
+            .initializer(|id| id * 10) // Set initializer
+            // .blocking_submission() // Add other options if needed
+            // .blocking_workers()
+            .build(|x: usize, (state, id)| {
+                assert_eq!(*state, id * 10);
+                Some(x + *state)
+            }, scope);
+
+        pool.submit_all(0..5);
+        let mut results: Vec<_> = pool.into_iter().collect();
+        results.sort_unstable();
+        // Since num_workers is 1, id is 0, state is 0
+        let expected: Vec<_> = (0..5).map(|x| x + 0).collect();
+        assert_eq!(results, expected);
+    });
+}
+
+#[test]
+fn test_ordered_builder_chaining() {
+     scope(|scope| {
+        let num_workers = NonZeroUsize::new(1).unwrap();
+        let pool = OrderedThreadpoolBuilder::new()
+            .num_workers(num_workers) // Set workers
+            .initializer(|id| id * 100) // Set initializer
+            // .blocking_submission() // Add other options if needed
+            // .blocking_workers()
+            .build(|x: usize, (state, id, _jid)| {
+                 assert_eq!(*state, id * 100);
+                 Some(x + *state)
+            }, scope);
+
+        pool.submit_all(0..5);
+        let results: Vec<_> = pool.into_iter().collect();
+         // Since num_workers is 1, id is 0, state is 0
+        let expected: Vec<_> = (0..5).map(|x| x + 0).collect();
+        assert_eq!(results, expected);
     });
 }

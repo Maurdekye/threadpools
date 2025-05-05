@@ -11,7 +11,6 @@ use std::{
         Mutex,
         atomic::{AtomicBool, Ordering},
         mpmc::channel,
-        mpsc::TryRecvError,
     },
     thread::{self, scope},
 };
