@@ -11,6 +11,7 @@ use std::{
         Mutex,
         atomic::{AtomicBool, Ordering},
         mpmc::channel,
+        mpsc::TryRecvError,
     },
     thread::{self, scope},
 };
@@ -38,19 +39,19 @@ where
                 scope.spawn(move || {
                     let mut stock = None;
                     loop {
-                        while let Ok(elem) = inbox.try_recv() {
-                            stock = match stock {
-                                Some(other) => {
-                                    outbox.send(f(elem, other)).unwrap();
-                                    None
+                        match inbox.try_recv() {
+                            Err(_) if work_finished.load(Ordering::Acquire) => break,
+                            Ok(elem) => {
+                                stock = match stock {
+                                    Some(other) => {
+                                        outbox.send(f(elem, other)).unwrap();
+                                        None
+                                    }
+                                    None => Some(elem),
                                 }
-                                None => Some(elem),
-                            };
+                            }
+                            _ => thread::yield_now(),
                         }
-                        if work_finished.load(Ordering::Acquire) {
-                            break;
-                        }
-                        thread::yield_now();
                     }
                     stock
                 })
@@ -188,9 +189,8 @@ where
                             let combined_range = (left_range.start..=right_range.end).into();
                             queue.lock().unwrap().insert(combined_item, combined_range);
                         }
-                        _ => {}
+                        _ => thread::yield_now(),
                     }
-                    thread::yield_now();
                 }
             });
         });
