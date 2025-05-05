@@ -1,6 +1,6 @@
 //! Multithreaded reducers.
 //!
-//! See [`ReduceAsync::reduce_async`] & [`ReduceAsyncCommutative::reduce_async_commutative`] 
+//! See [`ReduceAsync::reduce_async`] & [`ReduceAsyncCommutative::reduce_async_commutative`]
 //! for more detailed documentation.
 
 use core::range::RangeInclusive;
@@ -182,19 +182,13 @@ where
                 loop {
                     let pair = queue.lock().unwrap().pop_pair();
                     match pair {
-                        Break(()) => {
-                            if work_finished.load(Ordering::Acquire) {
-                                break;
-                            }
+                        Break(()) if work_finished.load(Ordering::Acquire) => break,
+                        Continue(Some(((left_item, left_range), (right_item, right_range)))) => {
+                            let combined_item = f(left_item, right_item);
+                            let combined_range = (left_range.start..=right_range.end).into();
+                            queue.lock().unwrap().insert(combined_item, combined_range);
                         }
-                        Continue(pair) => {
-                            if let Some(((left_item, left_range), (right_item, right_range))) = pair
-                            {
-                                let combined_item = f(left_item, right_item);
-                                let combined_range = (left_range.start..=right_range.end).into();
-                                queue.lock().unwrap().insert(combined_item, combined_range);
-                            }
-                        }
+                        _ => {}
                     }
                     thread::yield_now();
                 }
@@ -220,8 +214,8 @@ pub trait ReduceAsync: Iterator {
     ///
     /// For a faster reducer (but requires the reducing function to be commutative)
     /// see [`ReduceAsyncCommutative::reduce_async_commutative`]
-    /// 
-    /// If you require your reducing function to be both noncommutative and 
+    ///
+    /// If you require your reducing function to be both noncommutative and
     /// nonassociative, then it is not possible to parallelize the reduction, and
     /// you must use the sequential [`Iterator::reduce`] to reduce your data.
     ///
