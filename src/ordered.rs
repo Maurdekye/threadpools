@@ -303,6 +303,27 @@ where
 /// Allows the custom configuration of several pool properties.
 ///
 /// Refer to individual method implementations for more details.
+///
+/// ```rust
+/// use std::thread::scope;
+/// use std::num::NonZeroUsize;
+/// use threadpools::*;
+///
+/// scope(|s| {
+///     let pool = OrderedThreadpoolBuilder::new()
+///         .num_workers(NonZeroUsize::new(4).unwrap())
+///         .blocking_submission()
+///         .build(|x: i32, _| Some(x * x), s);
+///
+///     pool.submit_all(1..=4);
+///
+///     pool.wait_until_finished();
+///
+///     let mut results: Vec<_> = pool.iter().collect();
+///
+///     assert_eq!(results, vec![1, 4, 9, 16]);
+/// });
+/// ```
 #[derive(Clone, Debug)]
 pub struct OrderedThreadpoolBuilder {
     num_workers: NonZeroUsize,
@@ -421,6 +442,27 @@ impl OrderedThreadpoolBuilder {
 /// Allows the custom configuration of several pool properties.
 ///
 /// Refer to individual method implementations for more details.
+/// 
+/// ```rust
+/// use std::thread::scope;
+/// use std::num::NonZeroUsize;
+/// use threadpools::*;
+///
+/// scope(|s| {
+///     let pool = OrderedThreadpoolBuilder::new()
+///         .num_workers(NonZeroUsize::new(4).unwrap())
+///         .blocking_submission()
+///         .build(|x: i32, _| Some(x * x), s);
+///
+///     pool.submit_all(1..=4);
+///
+///     pool.wait_until_finished();
+///
+///     let mut results: Vec<_> = pool.iter().collect();
+///
+///     assert_eq!(results, vec![1, 4, 9, 16]);
+/// });
+/// ```
 pub struct InitializedOrderedThreadpoolBuilder<N> {
     initializer: N,
     num_workers: NonZeroUsize,

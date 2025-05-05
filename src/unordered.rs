@@ -38,7 +38,7 @@ use std::thread::available_parallelism;
 /// output of `Option<O>`. If it returns `Some(O)`, then the result
 /// is yielded as an output. If it returns `None`, the result is
 /// ignored. In this way, the [`Threadpool`] can be used as a map and a filter simultaneously.
-/// 
+///
 /// If you desire more detailed configuration, create your [`Threadpool`] using a [`ThreadpoolBuilder`]
 /// instead of the basic `new` constructor, which allows you to set various properties and flags,
 /// including the number of workers, blocking properties, and an initializer function.
@@ -209,11 +209,33 @@ where
     }
 }
 
-/// A builder for an [`Threadpool`].
+/// A builder for a [`Threadpool`].
 ///
 /// Allows the custom configuration of several pool properties.
 ///
 /// Refer to individual method implementations for more details.
+///
+/// ```rust
+/// use std::thread::scope;
+/// use std::num::NonZeroUsize;
+/// use threadpools::*;
+///
+/// scope(|s| {
+///     let pool = ThreadpoolBuilder::new()
+///         .num_workers(NonZeroUsize::new(4).unwrap())
+///         .blocking_submission()
+///         .build(|x: i32, _| Some(x * x), s);
+///
+///     pool.submit_all(1..=4);
+///
+///     pool.wait_until_finished();
+///
+///     let mut results: Vec<_> = pool.iter().collect();
+///     results.sort();
+///
+///     assert_eq!(results, vec![1, 4, 9, 16]);
+/// });
+/// ```
 #[derive(Clone, Debug)]
 pub struct ThreadpoolBuilder {
     num_workers: NonZeroUsize,
@@ -330,6 +352,28 @@ impl ThreadpoolBuilder {
 /// Allows the custom configuration of several pool properties.
 ///
 /// Refer to individual method implementations for more details.
+///
+/// ```rust
+/// use std::thread::scope;
+/// use std::num::NonZeroUsize;
+/// use threadpools::*;
+///
+/// scope(|s| {
+///     let pool = ThreadpoolBuilder::new()
+///         .num_workers(NonZeroUsize::new(4).unwrap())
+///         .blocking_submission()
+///         .build(|x: i32, _| Some(x * x), s);
+///
+///     pool.submit_all(1..=4);
+///
+///     pool.wait_until_finished();
+///
+///     let mut results: Vec<_> = pool.iter().collect();
+///     results.sort();
+///
+///     assert_eq!(results, vec![1, 4, 9, 16]);
+/// });
+/// ```
 pub struct InitializedThreadpoolBuilder<N> {
     initializer: N,
     num_workers: NonZeroUsize,
